@@ -47,11 +47,11 @@
             transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
         
-        /* Glowing animated levitating spheres keyframes */
+        /* Floating zero-gravity ambient particles keyframes */
         @keyframes floatParticles {
-            0% { transform: translateY(100vh) translateX(0) scale(1); opacity: 0; }
-            50% { opacity: 0.6; }
-            100% { transform: translateY(-10vh) translateX(100px) scale(0.5); opacity: 0; }
+            0% { transform: translateY(105vh) translateX(0) scale(1); opacity: 0; }
+            50% { opacity: 0.4; }
+            100% { transform: translateY(-10vh) translateX(50px) scale(0.6); opacity: 0; }
         }
         .ambient-particle {
             position: absolute;
@@ -69,7 +69,7 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
-        // Complete up-to-date BVE database containing all vehicles from your text list
+        // BVE Database containing all vehicles from your list
         const BANNED_DATABASE = [
             // Level 1
             { name: "1981 Bayro W10", level: "L1" },
@@ -291,6 +291,7 @@
         ];
 
         function App() {
+            /* STREAMING_CHUNK: Initializing React states... */
             const [garage, setGarage] = useState(() => {
                 const cleared = localStorage.getItem('gv_cleared');
                 if (cleared === 'true') {
@@ -300,13 +301,20 @@
                 if (saved) {
                     try { return JSON.parse(saved); } catch (e) { console.error(e); }
                 }
-                return []; // Strictly empty by default so users can delete and add dynamically!
+                return []; // Default empty layout matching user demand
             });
 
             useEffect(() => {
-                localStorage.setItem('gv_pro_garage_deck_v13', JSON.stringify(garage));
-                if (garage.length > 0) {
-                    localStorage.removeItem('gv_cleared');
+                try {
+                    localStorage.setItem('gv_pro_garage_deck_v13', JSON.stringify(garage));
+                    if (garage.length > 0) {
+                        localStorage.removeItem('gv_cleared');
+                    }
+                } catch (error) {
+                    if (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
+                        console.error("Storage limit exceeded. Try downloading external JSON backup payloads.");
+                        showNotification("Quota Full! Save locally as external JSON and Clear Garage.");
+                    }
                 }
             }, [garage]);
 
@@ -320,33 +328,36 @@
             const [sortDirection, setSortDirection] = useState('desc');
             const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
 
-            // Filter Dropdowns States
+            // Filter States
             const [colorFilter, setColorFilter] = useState('All Colors');
             const [isColorDropdownOpen, setIsColorDropdownOpen] = useState(false);
 
             const [levelFilter, setLevelFilter] = useState('All Levels');
             const [isLevelDropdownOpen, setIsLevelDropdownOpen] = useState(false);
 
-            const [isCustomSelectOpen, setIsCustomSelectOpen] = useState(false);
-
-            // Hover states for stats flip
+            // Hover configurations
             const [hoveredCardId, setHoveredCardId] = useState(null);
             const [hoveredBveIndex, setHoveredBveIndex] = useState(null);
 
-            // Context variables
+            // Context states
             const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, carId: null });
             const [showAddEditModal, setShowAddEditModal] = useState(false);
             const [currentCar, setCurrentCar] = useState(null);
             const [toast, setToast] = useState({ visible: false, message: '' });
 
-            // Immersive detailed overlay
+            // Immersive Gallery overlay states
             const [selectedGalleryCar, setSelectedGalleryCar] = useState(null);
             const [showGalleryModal, setShowGalleryModal] = useState(false);
             const bulkFileInputRef = useRef(null);
 
-            // Image sampling context
+            // Front cover image color sampling canvas
             const paletteCanvasRef = useRef(null);
             const [sampledPicData, setSampledPicData] = useState(null);
+
+            // Stopwatch Timer State Configurations
+            const [isTimerRunning, setIsTimerRunning] = useState(false);
+            const [timerTime, setTimerTime] = useState(0);
+            const timerRef = useRef(null);
 
             const showNotification = (msg) => {
                 setToast({ visible: true, message: msg });
@@ -370,6 +381,7 @@
                 };
             }, []);
 
+            /* STREAMING_CHUNK: Managing slider drag updates... */
             useEffect(() => {
                 const handleMouseMove = (e) => {
                     if (!isDragging) return;
@@ -398,6 +410,7 @@
                 };
             }, [isDragging]);
 
+            // Auto-detect and resolve Level of any vehicle against Banned List
             const getCarLevel = (car) => {
                 const brandStr = car.brand || "";
                 const modelStr = car.modelName || "";
@@ -412,6 +425,7 @@
                     return match.level;
                 }
                 
+                // Defaults strictly to Level 0 if not matched in the banned list
                 if (car.level && car.level !== '0' && car.level !== 'Level 0' && car.level !== 'Standard') {
                     return car.level;
                 }
@@ -427,10 +441,11 @@
                 if (lvl === 'BANNED' || lvl === 'PERMBANNED' || lvl === 'PERM BANNED') {
                     return { bg: 'rgba(127, 29, 29, 0.6)', text: '#ff2222', border: '#ef4444', glow: '0 0 10px rgba(239, 68, 68, 0.8)' };
                 }
+                // Solidified standard gray colors for Level 0
                 return { bg: 'rgba(148, 163, 184, 0.15)', text: '#94a3b8', border: 'rgba(148, 163, 184, 0.3)' };
             };
 
-            // Smoothened Volumetric Spotlight Paint Shader (Correcting b1d160.png perfectly)
+            // Volumetric smooth background gradient mapping (Correcting b1d160.png perfectly)
             const getDynamicGradient = (colorInput) => {
                 const input = (colorInput || "").toLowerCase().trim();
                 let r = 30, g = 35, b = 45; // Subtle Slate base
@@ -657,7 +672,93 @@
 
             const handleOpenGallery = (car) => {
                 setSelectedGalleryCar(car);
+                setTimerTime(0);
+                setIsTimerRunning(false);
                 setShowGalleryModal(true);
+            };
+
+            /* STREAMING_CHUNK: Managing file backup downloads... */
+            const handleDownloadLocalBackup = () => {
+                try {
+                    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(garage));
+                    const dlAnchorElem = document.createElement('a');
+                    dlAnchorElem.setAttribute("href", dataStr);
+                    dlAnchorElem.setAttribute("download", `okgarage_backup_${Date.now()}.json`);
+                    dlAnchorElem.click();
+                    showNotification("External JSON backup file saved to computer.");
+                } catch (e) {
+                    console.error("Payload compilation error: ", e);
+                }
+            };
+
+            const handleImportLocalFile = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const parsed = JSON.parse(event.target.result);
+                        if (Array.isArray(parsed)) {
+                            setGarage(parsed);
+                            showNotification("Local backup configuration parsed & injected!");
+                        } else {
+                            showNotification("Invalid JSON file layout structure.");
+                        }
+                    } catch (err) {
+                        showNotification("Incorrect configuration file format.");
+                    }
+                };
+                reader.readAsText(file);
+            };
+
+            /* STREAMING_CHUNK: Managing detailed stopwatch timer logic... */
+            const handleToggleTimer = () => {
+                if (isTimerRunning) {
+                    // STOP the race timer and check if it breaks a personal best
+                    clearInterval(timerRef.current);
+                    setIsTimerRunning(false);
+                    
+                    const finishTime = timerTime;
+                    const prevBest = selectedGalleryCar.bestTime || 0;
+                    if (prevBest === 0 || finishTime < prevBest) {
+                        const updatedGarage = garage.map(c => {
+                            if (c.id === selectedGalleryCar.id) {
+                                const updatedCar = { ...c, bestTime: finishTime };
+                                setSelectedGalleryCar(updatedCar);
+                                return updatedCar;
+                            }
+                            return c;
+                        });
+                        setGarage(updatedGarage);
+                        showNotification(`New Personal Best Run! ⏱️ ${formatTimerTime(finishTime)}`);
+                    } else {
+                        showNotification(`Finished run! ⏱️ ${formatTimerTime(finishTime)}`);
+                    }
+                } else {
+                    // START the race timer
+                    const startTime = Date.now() - timerTime;
+                    timerRef.current = setInterval(() => {
+                        setTimerTime(Date.now() - startTime);
+                    }, 10);
+                    setIsTimerRunning(true);
+                }
+            };
+
+            const handleResetTimer = () => {
+                clearInterval(timerRef.current);
+                setIsTimerRunning(false);
+                setTimerTime(0);
+            };
+
+            const formatTimerTime = (ms) => {
+                const totalSeconds = Math.floor(ms / 1000);
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+                const milliseconds = Math.floor((ms % 1000) / 10);
+
+                const pad = (num, size = 2) => ('00' + num).slice(-size);
+                return `${pad(minutes)}:${pad(seconds)}.${pad(milliseconds)}`;
             };
 
             const handleBulkImageUpload = (e) => {
@@ -828,6 +929,15 @@
                             <h1 className="text-xl font-extrabold tracking-tight font-['Montserrat'] bg-gradient-to-r from-white via-white/80 to-white/60 bg-clip-text text-transparent">Greenville Pro Garage</h1>
                         </div>
                         <div className="flex gap-3">
+                            {/* File Upload / JSON Drag backup trigger actions */}
+                            <button onClick={handleDownloadLocalBackup} className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5" title="Download backup file directly to computer">
+                                📥 Export JSON Data
+                            </button>
+                            <label className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5 cursor-pointer" title="Import database file from local path">
+                                📤 Import JSON File
+                                <input type="file" accept=".json" onChange={handleImportLocalFile} className="hidden" />
+                            </label>
+
                             <button onClick={handleDeleteAll} className="h-10 px-5 rounded-full bg-red-900/20 hover:bg-red-900/40 border border-red-500/30 text-red-400 text-[13px] font-semibold transition-all">
                                 Delete All Vehicles
                             </button>
@@ -858,7 +968,7 @@
                                                     key={lvl}
                                                     type="button"
                                                     onClick={() => setBveLevelFilter(lvl)}
-                                                    className={`px-3 py-1 rounded-[8px] font-medium transition-all whitespace-nowrap ${bveLevelFilter === lvl ? 'bg-white/10 text-white shadow' : 'text-white/50 hover:text-white/80'}`}
+                                                    className={`px-3 py-1 rounded-[8px] font-medium transition-all ${bveLevelFilter === lvl ? 'bg-white/10 text-white shadow' : 'text-white/50 hover:text-white/80'}`}
                                                 >
                                                     {lvl}
                                                 </button>
@@ -899,7 +1009,7 @@
                                                         onMouseEnter={() => setHoveredBveIndex(idx)}
                                                         onMouseLeave={() => setHoveredBveIndex(null)}
                                                         style={{ background: spec.gradient, borderColor: spec.border }}
-                                                        className="group relative rounded-2xl p-5 border transition-all card-transition h-[250px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer"
+                                                        className="group relative rounded-2xl p-5 border transition-all card-transition h-[270px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer"
                                                         onClick={() => handleOpenGallery(ownedCar)}
                                                     >
                                                         <div className="relative z-10 pr-1">
@@ -919,7 +1029,7 @@
                                                                         style={{ backgroundColor: badgeStyles.bg, color: badgeStyles.text, borderColor: badgeStyles.border, boxShadow: badgeStyles.glow || 'none' }}
                                                                         className="text-[10px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider"
                                                                     >
-                                                                        {resolvedLevel}
+                                                                        {resolvedLevel === 'Level 0' ? '0' : resolvedLevel}
                                                                     </span>
                                                                 </div>
                                                             </div>
@@ -944,7 +1054,7 @@
                                                                         {isHovered ? 'Horsepower' : 'Top Speed'}
                                                                     </span>
                                                                     <span className="text-xs font-bold text-white block">
-                                                                        {isHovered ? `${ownedCar.horsepower} HP` : `${ownedCar.topSpeed} kmh`}
+                                                                        {isHovered ? `${ownedCar.horsepower} HP` : `${ownedCar.topSpeed} mph`}
                                                                     </span>
                                                                 </div>
                                                                 <div>
@@ -982,7 +1092,6 @@
                                                 );
                                             }
 
-                                            {}
                                             return (
                                                 <div 
                                                     key={`bve-${idx}`}
@@ -1001,7 +1110,7 @@
                                                         style={{ backgroundColor: badgeStyles.bg, color: badgeStyles.text, borderColor: badgeStyles.border, boxShadow: badgeStyles.glow || 'none' }}
                                                         className="text-[10px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider shrink-0"
                                                     >
-                                                        {resolvedLevel}
+                                                        {resolvedLevel === 'Level 0' ? '0' : resolvedLevel}
                                                     </span>
                                                 </div>
                                             );
@@ -1152,7 +1261,7 @@
                                                     onMouseLeave={() => setHoveredCardId(null)}
                                                     onClick={() => handleOpenGallery(car)}
                                                     style={{ background: spec.gradient, borderColor: spec.border }}
-                                                    className="group relative rounded-2xl p-5 border transition-all card-transition h-[250px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer"
+                                                    className="group relative rounded-2xl p-5 border transition-all card-transition h-[270px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer"
                                                 >
                                                     {/* Top Header section - pr-2 gives breathing room to level badge */}
                                                     <div className="relative z-10 pr-1">
@@ -1181,17 +1290,17 @@
                                                                     style={{ backgroundColor: badgeStyles.bg, color: badgeStyles.text, borderColor: badgeStyles.border, boxShadow: badgeStyles.glow || 'none' }}
                                                                     className="text-[10px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider"
                                                                 >
-                                                                    {resolvedLevel}
+                                                                    {resolvedLevel === 'Level 0' ? '0' : resolvedLevel}
                                                                 </span>
                                                             </div>
                                                         </div>
                                                     </div>
 
-                                                    {/* Centered Silhouette Icon / Active image - Absolutely centered in remaining space */}
+                                                    {/* Centered Silhouette Icon / Active transparent image (Resolving transparency glitch perfectly) */}
                                                     <div className="absolute top-[52%] left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-0">
                                                         {car.image ? (
-                                                            <div className="w-[140px] h-[80px] rounded-lg overflow-hidden bg-black/30 border border-white/5 flex items-center justify-center">
-                                                                <img src={car.image} alt="active cover" className="w-full h-full object-cover" />
+                                                            <div className="w-[140px] h-[80px] rounded-lg overflow-hidden bg-transparent flex items-center justify-center">
+                                                                <img src={car.image} alt="active cover" className="w-full h-full object-contain" />
                                                             </div>
                                                         ) : (
                                                             <div className="w-24 h-24 flex items-center justify-center relative">
@@ -1210,7 +1319,7 @@
                                                                     {isHovered ? 'Horsepower' : 'Top Speed'}
                                                                 </span>
                                                                 <span className="text-xs font-bold text-white block">
-                                                                    {isHovered ? `${car.horsepower} HP` : `${car.topSpeed} kmh`}
+                                                                    {isHovered ? `${car.horsepower} HP` : `${car.topSpeed} mph`}
                                                                 </span>
                                                             </div>
                                                             <div>
@@ -1294,7 +1403,7 @@
                         </div>
                     )}
 
-                    {/* Immersive FULL-SCREEN Photo Album Overlay with CSS Background Floating Particles */}
+                    {/* Immersive FULL-SCREEN Scrollable Layout Overlay */}
                     {showGalleryModal && selectedGalleryCar && (() => {
                         const spec = getDynamicGradient(selectedGalleryCar.color);
                         const resolvedLevel = getCarLevel(selectedGalleryCar);
@@ -1304,29 +1413,6 @@
                         return (
                             <div className="fixed inset-0 z-[120] flex flex-col bg-[#07080b]/95 backdrop-blur-2xl overflow-y-auto transition-all duration-500">
                                 
-                                {/* Ambient dynamic float particles inside full screen album */}
-                                <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-                                    <div 
-                                        className="absolute inset-0 opacity-20" 
-                                        style={{ background: `radial-gradient(circle at 50% 50%, rgba(${spec.rawRGB}, 0.3) 0%, transparent 70%)` }}
-                                    />
-                                    {/* Dynamic Particle Sprites */}
-                                    {[...Array(12)].map((_, i) => (
-                                        <div 
-                                            key={i} 
-                                            className="ambient-particle"
-                                            style={{
-                                                '--particle-color': `rgba(${spec.rawRGB}, 0.5)`,
-                                                '--speed': `${6 + i * 2}s`,
-                                                left: `${8 + i * 8}%`,
-                                                width: `${20 + i * 15}px`,
-                                                height: `${20 + i * 15}px`,
-                                                animationDelay: `${i * 0.4}s`
-                                            }}
-                                        />
-                                    ))}
-                                </div>
-
                                 {/* Immersive Full Screen Gallery Header */}
                                 <header className="w-full px-12 py-6 border-b border-white/[0.05] flex justify-between items-center z-10 relative">
                                     <div className="flex items-center gap-4">
@@ -1334,7 +1420,7 @@
                                             style={{ backgroundColor: badgeStyles.bg, color: badgeStyles.text, borderColor: badgeStyles.border, boxShadow: badgeStyles.glow || 'none' }}
                                             className="text-xs font-black px-3 py-1 rounded border uppercase tracking-widest"
                                         >
-                                            {resolvedLevel}
+                                            {resolvedLevel === 'Level 0' ? '0' : resolvedLevel}
                                         </span>
                                         <div>
                                             <h3 className="text-2xl font-black font-['Montserrat'] tracking-tight text-white leading-none">
@@ -1352,122 +1438,192 @@
                                     </button>
                                 </header>
 
-                                {/* Gallery Main Workspace Content Split */}
-                                <div className="flex-1 px-12 py-8 z-10 grid grid-cols-1 lg:grid-cols-12 gap-10 relative">
+                                {/* Gallery Main Content Scrollable Workspace */}
+                                <div className="flex-1 px-12 py-8 z-10 flex flex-col items-center gap-10 max-w-[1200px] mx-auto w-full relative">
                                     
-                                    {/* Left Segment: Spotlight Vehicle Cover Display */}
-                                    <div className="lg:col-span-8 flex flex-col gap-6">
-                                        <div 
-                                            style={{ background: spec.gradient, borderColor: spec.border }}
-                                            className="w-full h-[52vh] rounded-[32px] border overflow-hidden flex items-center justify-center relative shadow-2xl transition-all"
-                                        >
-                                            {selectedGalleryCar.image ? (
-                                                <img src={selectedGalleryCar.image} alt="current cover" className="w-full h-full object-contain p-4" />
-                                            ) : (
-                                                <div className="flex flex-col items-center justify-center gap-3">
-                                                    <span className="material-symbols-outlined text-white/20 transform scale-[2.5]">
-                                                        directions_car
+                                    {/* Spotlight Vehicle: Identical to card look inside My Garage but larger */}
+                                    <div 
+                                        style={{ background: spec.gradient, borderColor: spec.border }}
+                                        className="w-full max-w-[500px] rounded-3xl p-8 border transition-all card-transition relative shadow-2xl h-[340px]"
+                                    >
+                                        <div className="relative z-10">
+                                            <div className="flex justify-between items-start gap-4">
+                                                <div>
+                                                    <div className="flex gap-6">
+                                                        <div>
+                                                            <div className="text-[10px] text-white/40 font-bold uppercase tracking-wider mb-0.5">Year</div>
+                                                            <div className="text-sm font-bold text-white leading-none mb-1">{selectedGalleryCar.year}</div>
+                                                        </div>
+                                                        <div>
+                                                            <div className="text-[10px] text-white/40 font-bold uppercase tracking-wider mb-0.5">Model</div>
+                                                            <div className="text-sm font-bold text-white leading-tight">
+                                                                {selectedGalleryCar.brand} {selectedGalleryCar.modelName}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-[11px] text-white/60 font-semibold mt-1">
+                                                        {selectedGalleryCar.trim && `Trim: ${selectedGalleryCar.trim}`}
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className="text-[10px] text-white/40 font-bold uppercase tracking-wider mb-0.5">Level</div>
+                                                    <span 
+                                                        style={{ backgroundColor: badgeStyles.bg, color: badgeStyles.text, borderColor: badgeStyles.border, boxShadow: badgeStyles.glow || 'none' }}
+                                                        className="text-[11px] font-bold px-2.5 py-0.5 rounded border uppercase tracking-wider"
+                                                    >
+                                                        {resolvedLevel === 'Level 0' ? '0' : resolvedLevel}
                                                     </span>
-                                                    <span className="text-xs text-white/40 font-bold uppercase tracking-widest">No primary photo uploaded</span>
                                                 </div>
-                                            )}
-                                            {selectedGalleryCar.image && (
-                                                <div className="absolute bottom-6 left-6 bg-[#07080b]/90 backdrop-blur-xl border border-emerald-500/30 px-4 py-2 rounded-full text-[10px] font-black tracking-widest text-emerald-400 shadow-xl uppercase">
-                                                    ★ Active Fleet Cover
+                                            </div>
+                                        </div>
+
+                                        <div className="absolute top-[52%] left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-0">
+                                            {selectedGalleryCar.image ? (
+                                                <div className="w-[200px] h-[120px] rounded-xl overflow-hidden bg-transparent flex items-center justify-center">
+                                                    <img src={selectedGalleryCar.image} alt="active cover" className="w-full h-full object-contain" />
                                                 </div>
+                                            ) : (
+                                                <span className="material-symbols-outlined text-white/10 transform scale-[1.8] select-none">
+                                                    directions_car
+                                                </span>
                                             )}
                                         </div>
 
-                                        {/* Technical Spec Dashboard Panel */}
-                                        <div className="grid grid-cols-4 gap-4">
-                                            <div className="bg-white/[0.02] border border-white/5 p-4 rounded-2xl">
-                                                <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-1">Horsepower</span>
-                                                <span className="text-lg font-black">{selectedGalleryCar.horsepower} HP</span>
+                                        <div className="absolute bottom-8 left-8 right-8 z-10 flex flex-col gap-3">
+                                            <div className="grid grid-cols-2 gap-x-4 pt-2 border-t border-white/[0.04]">
+                                                <div>
+                                                    <span className="text-[11px] text-white/40 font-bold uppercase tracking-wider block mb-0.5">Top Speed</span>
+                                                    <span className="text-sm font-bold text-white block">{selectedGalleryCar.topSpeed} mph</span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-[11px] text-white/40 font-bold uppercase tracking-wider block mb-0.5">Buy Price</span>
+                                                    <span className="text-sm font-bold text-emerald-400 block">${selectedGalleryCar.cost.toLocaleString()}</span>
+                                                </div>
                                             </div>
-                                            <div className="bg-white/[0.02] border border-white/5 p-4 rounded-2xl">
-                                                <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-1">Top Speed</span>
-                                                <span className="text-lg font-black">{selectedGalleryCar.topSpeed} kmh</span>
-                                            </div>
-                                            <div className="bg-white/[0.02] border border-white/5 p-4 rounded-2xl">
-                                                <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-1 font-sans">Odometer Miles</span>
-                                                <span className="text-lg font-black">{Number(selectedGalleryCar.miles).toLocaleString()} mi</span>
-                                            </div>
-                                            <div className="bg-white/[0.02] border border-white/5 p-4 rounded-2xl">
-                                                <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-1 font-sans">Estimated Sell Price</span>
-                                                <span className="text-lg font-black text-emerald-400">${estimatedSell.toLocaleString()}</span>
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex gap-2">
+                                                    {(selectedGalleryCar.tags && selectedGalleryCar.tags.length > 0) ? (
+                                                        selectedGalleryCar.tags.map(tag => {
+                                                            const styles = getGreenvilleTagStyles(tag);
+                                                            return (
+                                                                <span 
+                                                                    key={tag} 
+                                                                    style={{ backgroundColor: styles.bg, color: styles.text, borderColor: styles.border }}
+                                                                    className="text-[10px] px-2.5 py-0.5 rounded-full font-bold border"
+                                                                >
+                                                                    {tag}
+                                                                </span>
+                                                            );
+                                                        })
+                                                    ) : (
+                                                        <span className="text-[10px] text-white/20 italic">No tags</span>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
 
-                                    {/* Right Segment: Photo Grid and Bulk Upload Manager */}
-                                    <div className="lg:col-span-4 flex flex-col gap-6">
-                                        <div className="bg-white/[0.02] border border-white/5 p-6 rounded-3xl flex flex-col h-full overflow-hidden">
-                                            
-                                            <div className="flex justify-between items-center mb-6 pb-4 border-b border-white/[0.05]">
-                                                <div>
-                                                    <h4 className="text-sm font-black uppercase tracking-wider">Photo Album ({selectedGalleryCar.images?.length || 0})</h4>
-                                                    <p className="text-[10px] text-white/40 font-bold mt-1 font-sans">BULK IMPORT PLATFORM</p>
-                                                </div>
-                                                <div>
-                                                    <input 
-                                                        ref={bulkFileInputRef}
-                                                        type="file" 
-                                                        multiple 
-                                                        accept="image/*" 
-                                                        onChange={handleBulkImageUpload}
-                                                        className="hidden" 
-                                                    />
-                                                    <button 
-                                                        onClick={() => bulkFileInputRef.current?.click()}
-                                                        className="px-6 py-3 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-400 font-bold rounded-2xl text-xs transition-colors shadow-lg"
-                                                    >
-                                                        + Add Photos
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            {/* Album Photo Selection Feed */}
-                                            <div className="flex-1 overflow-y-auto pr-2 space-y-4">
-                                                {selectedGalleryCar.images && selectedGalleryCar.images.length > 0 ? (
-                                                    <div className="grid grid-cols-2 gap-3">
-                                                        {selectedGalleryCar.images.map((img, idx) => {
-                                                            const isActive = selectedGalleryCar.image === img;
-                                                            return (
-                                                                <div 
-                                                                    key={idx}
-                                                                    className={`relative aspect-video rounded-xl overflow-hidden border bg-black/40 cursor-pointer group/item transition-all ${isActive ? 'border-emerald-500 ring-4 ring-emerald-500/20 scale-[1.02]' : 'border-white/5 hover:border-white/20'}`}
-                                                                    onClick={() => handleSelectActiveCover(img)}
-                                                                >
-                                                                    <img src={img} alt={`album-${idx}`} className="w-full h-full object-cover" />
-                                                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/item:opacity-100 flex items-center justify-center transition-all duration-300">
-                                                                        <span className="text-[9px] font-black uppercase tracking-widest text-white bg-black/80 px-2.5 py-1.5 rounded-lg border border-white/10">Set Cover</span>
-                                                                    </div>
-                                                                    <button 
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            handleDeleteImageFromGallery(idx);
-                                                                        }}
-                                                                        className="absolute top-2 right-2 w-8 h-8 bg-red-600 hover:bg-red-500 rounded-full flex items-center justify-center text-xs text-white font-bold transition-colors opacity-0 group-hover/item:opacity-100 shadow-lg z-20"
-                                                                        title="Remove Image"
-                                                                    >
-                                                                        ✕
-                                                                    </button>
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                ) : (
-                                                    <div className="h-48 border border-dashed border-white/10 bg-white/[0.01] rounded-2xl flex flex-col items-center justify-center text-center p-6">
-                                                        <span className="material-symbols-outlined text-white/10 mb-2 scale-125">
-                                                            directions_car
-                                                        </span>
-                                                        <p className="text-xs text-white/40 font-bold tracking-wider uppercase mb-1">Album empty</p>
-                                                        <p className="text-[10px] text-white/30 max-w-[180px] leading-relaxed">Use the + Add Photos button to bulk import images.</p>
-                                                    </div>
-                                                )}
-                                            </div>
-
+                                    {/* Racing Stopwatch Control Panel (Integrated directly below card spotlight) */}
+                                    <div className="w-full max-w-[500px] bg-white/[0.02] border border-white/5 p-6 rounded-3xl flex flex-col items-center gap-4">
+                                        <div className="flex justify-between items-center w-full pb-2 border-b border-white/[0.05]">
+                                            <span className="text-[11px] font-black uppercase tracking-wider text-white/40 flex items-center gap-1.5">
+                                                ⏱️ Track Race Performance StopWatch
+                                            </span>
+                                            {selectedGalleryCar.bestTime ? (
+                                                <span className="text-[10px] font-bold text-[#ffd60a] bg-[#ffd60a]/10 border border-[#ffd60a]/20 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                                                    🏆 PB: {formatTimerTime(selectedGalleryCar.bestTime)}
+                                                </span>
+                                            ) : (
+                                                <span className="text-[10px] text-white/20 italic">No runs yet</span>
+                                            )}
                                         </div>
+
+                                        <div className="text-4xl font-black font-mono tracking-tight text-white/95 py-2">
+                                            {formatTimerTime(timerTime)}
+                                        </div>
+
+                                        <div className="flex items-center gap-3 w-full">
+                                            <button 
+                                                onClick={handleToggleTimer}
+                                                className={`flex-1 py-3 px-5 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 transition-all shadow-lg ${
+                                                    isTimerRunning 
+                                                        ? 'bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-red-400' 
+                                                        : 'bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-400'
+                                                }`}
+                                            >
+                                                <span>{isTimerRunning ? '🛑 Stop Run' : '🏁 Start Run'}</span>
+                                            </button>
+                                            <button 
+                                                onClick={handleResetTimer}
+                                                className="py-3 px-5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-black uppercase tracking-widest transition-all"
+                                            >
+                                                🔄 Reset
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Album Photos Section directly under the spotlight */}
+                                    <div className="w-full bg-white/[0.02] border border-white/5 p-8 rounded-3xl flex flex-col">
+                                        <div className="flex justify-between items-center mb-6 pb-4 border-b border-white/[0.05]">
+                                            <div>
+                                                <h4 className="text-sm font-black uppercase tracking-wider">Photo Album ({selectedGalleryCar.images?.length || 0})</h4>
+                                                <p className="text-[10px] text-white/40 font-bold mt-1">BULK IMPORT PLATFORM</p>
+                                            </div>
+                                            <div>
+                                                <input 
+                                                    ref={bulkFileInputRef}
+                                                    type="file" 
+                                                    multiple 
+                                                    accept="image/*" 
+                                                    onChange={handleBulkImageUpload}
+                                                    className="hidden" 
+                                                />
+                                                <button 
+                                                    onClick={() => bulkFileInputRef.current?.click()}
+                                                    className="px-6 py-3 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-400 font-bold rounded-2xl text-xs transition-colors shadow-lg"
+                                                >
+                                                    + Add Photos
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {selectedGalleryCar.images && selectedGalleryCar.images.length > 0 ? (
+                                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                                {selectedGalleryCar.images.map((img, idx) => {
+                                                    const isActive = selectedGalleryCar.image === img;
+                                                    return (
+                                                        <div 
+                                                            key={idx}
+                                                            className={`relative aspect-video rounded-xl overflow-hidden border bg-black/40 cursor-pointer group/item transition-all ${isActive ? 'border-emerald-500 ring-4 ring-emerald-500/20 scale-[1.02]' : 'border-white/5 hover:border-white/20'}`}
+                                                            onClick={() => handleSelectActiveCover(img)}
+                                                        >
+                                                            <img src={img} alt={`album-${idx}`} className="w-full h-full object-cover" />
+                                                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/item:opacity-100 flex items-center justify-center transition-all duration-300">
+                                                                <span className="text-[9px] font-black uppercase tracking-widest text-white bg-black/80 px-2.5 py-1.5 rounded-lg border border-white/10">Set Cover</span>
+                                                            </div>
+                                                            <button 
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleDeleteImageFromGallery(idx);
+                                                                }}
+                                                                className="absolute top-2 right-2 w-8 h-8 bg-red-600 hover:bg-red-500 rounded-full flex items-center justify-center text-xs text-white font-bold transition-colors opacity-0 group-hover/item:opacity-100 shadow-lg z-20"
+                                                                title="Remove Image"
+                                                            >
+                                                                ✕
+                                                            </button>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        ) : (
+                                            <div className="h-48 border border-dashed border-white/10 bg-white/[0.01] rounded-2xl flex flex-col items-center justify-center text-center p-6">
+                                                <span className="material-symbols-outlined text-white/10 mb-2 scale-125">
+                                                    directions_car
+                                                </span>
+                                                <p className="text-xs text-white/40 font-bold tracking-wider uppercase mb-1">Album empty</p>
+                                                <p className="text-[10px] text-white/30 max-w-[180px] leading-relaxed">Use the + Add Photos button to bulk import images.</p>
+                                            </div>
+                                        )}
                                     </div>
 
                                 </div>
@@ -1637,46 +1793,8 @@
                                             <input type="number" placeholder="450" value={currentCar.horsepower} onChange={e => setCurrentCar({ ...currentCar, horsepower: e.target.value })} className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-white/20" />
                                         </div>
                                         <div className="flex flex-col gap-1">
-                                            <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans">Top Speed (kmh)</label>
+                                            <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans">Top Speed (mph)</label>
                                             <input type="number" placeholder="180" value={currentCar.topSpeed} onChange={e => setCurrentCar({ ...currentCar, topSpeed: e.target.value })} className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-white/20" />
-                                        </div>
-
-                                        {/* Custom Level Dropdown */}
-                                        <div className="flex flex-col gap-1 col-span-2 relative">
-                                            <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans">BVE Level Categorization</label>
-                                            
-                                            <div 
-                                                onClick={() => setIsCustomSelectOpen(!isCustomSelectOpen)}
-                                                className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-2.5 text-xs text-white flex justify-between items-center cursor-pointer hover:border-white/10 transition-colors"
-                                            >
-                                                <span>{currentCar.level || 'Level 0'}</span>
-                                                <span className="text-[10px] text-white/40">{isCustomSelectOpen ? '▲' : '▼'}</span>
-                                            </div>
-
-                                            {isCustomSelectOpen && (
-                                                <div className="absolute top-[102%] left-0 w-full bg-[#18181c] border border-white/10 rounded-xl p-1 shadow-2xl z-50 flex flex-col max-h-48 overflow-y-auto">
-                                                    {["Level 0", "Level 1 (L1)", "Level 2 (L2)", "Level 3 (L3)", "Level 4 (L4)", "Permbanned"].map(lvlOpt => (
-                                                        <div
-                                                            key={lvlOpt}
-                                                            onClick={() => {
-                                                                const mapping = {
-                                                                    "Level 0": "Level 0",
-                                                                    "Level 1 (L1)": "L1",
-                                                                    "Level 2 (L2)": "L2",
-                                                                    "Level 3 (L3)": "L3",
-                                                                    "Level 4 (L4)": "L4",
-                                                                    "Permbanned": "Permbanned"
-                                                                };
-                                                                setCurrentCar({ ...currentCar, level: mapping[lvlOpt] });
-                                                                setIsCustomSelectOpen(false);
-                                                            }}
-                                                            className="px-4 py-2 hover:bg-white/10 rounded-lg text-xs font-semibold cursor-pointer transition-colors text-white break-words whitespace-normal"
-                                                        >
-                                                            {lvlOpt}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
                                         </div>
                                     </div>
 
