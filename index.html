@@ -46,21 +46,6 @@
         .card-transition {
             transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        
-        /* Floating zero-gravity ambient particles keyframes */
-        @keyframes floatParticles {
-            0% { transform: translateY(105vh) translateX(0) scale(1); opacity: 0; }
-            50% { opacity: 0.4; }
-            100% { transform: translateY(-10vh) translateX(50px) scale(0.6); opacity: 0; }
-        }
-        .ambient-particle {
-            position: absolute;
-            bottom: -20px;
-            background: radial-gradient(circle, var(--particle-color) 0%, transparent 70%);
-            border-radius: 50%;
-            animation: floatParticles var(--speed) linear infinite;
-            pointer-events: none;
-        }
     </style>
 </head>
 <body>
@@ -291,7 +276,6 @@
         ];
 
         function App() {
-            /* STREAMING_CHUNK: Initializing React states... */
             const [garage, setGarage] = useState(() => {
                 const cleared = localStorage.getItem('gv_cleared');
                 if (cleared === 'true') {
@@ -301,7 +285,7 @@
                 if (saved) {
                     try { return JSON.parse(saved); } catch (e) { console.error(e); }
                 }
-                return []; // Default empty layout matching user demand
+                return [];
             });
 
             useEffect(() => {
@@ -312,8 +296,8 @@
                     }
                 } catch (error) {
                     if (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
-                        console.error("Storage limit exceeded. Try downloading external JSON backup payloads.");
-                        showNotification("Quota Full! Save locally as external JSON and Clear Garage.");
+                        console.error("Storage full.");
+                        showNotification("Quota Full! Download JSON file and Clear Garage.");
                     }
                 }
             }, [garage]);
@@ -328,36 +312,27 @@
             const [sortDirection, setSortDirection] = useState('desc');
             const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
 
-            // Filter States
+            // Filter states
             const [colorFilter, setColorFilter] = useState('All Colors');
             const [isColorDropdownOpen, setIsColorDropdownOpen] = useState(false);
 
             const [levelFilter, setLevelFilter] = useState('All Levels');
             const [isLevelDropdownOpen, setIsLevelDropdownOpen] = useState(false);
 
-            // Hover configurations
             const [hoveredCardId, setHoveredCardId] = useState(null);
             const [hoveredBveIndex, setHoveredBveIndex] = useState(null);
 
-            // Context states
             const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, carId: null });
             const [showAddEditModal, setShowAddEditModal] = useState(false);
             const [currentCar, setCurrentCar] = useState(null);
             const [toast, setToast] = useState({ visible: false, message: '' });
 
-            // Immersive Gallery overlay states
             const [selectedGalleryCar, setSelectedGalleryCar] = useState(null);
             const [showGalleryModal, setShowGalleryModal] = useState(false);
             const bulkFileInputRef = useRef(null);
 
-            // Front cover image color sampling canvas
             const paletteCanvasRef = useRef(null);
             const [sampledPicData, setSampledPicData] = useState(null);
-
-            // Stopwatch Timer State Configurations
-            const [isTimerRunning, setIsTimerRunning] = useState(false);
-            const [timerTime, setTimerTime] = useState(0);
-            const timerRef = useRef(null);
 
             const showNotification = (msg) => {
                 setToast({ visible: true, message: msg });
@@ -381,16 +356,14 @@
                 };
             }, []);
 
-            /* STREAMING_CHUNK: Managing slider drag updates... */
             useEffect(() => {
                 const handleMouseMove = (e) => {
                     if (!isDragging) return;
                     const rect = document.body.getBoundingClientRect();
                     let pct = (e.clientX / rect.width) * 100;
                     
-                    // Standard smooth thresholds
-                    if (pct < 5) pct = 0; // Snap cleanly to full screen garage
-                    if (pct > 95) pct = 100; // Snap cleanly to full screen BVE Registry
+                    if (pct < 5) pct = 0; 
+                    if (pct > 95) pct = 100; 
                     
                     setSplitOffset(pct);
                 };
@@ -410,7 +383,6 @@
                 };
             }, [isDragging]);
 
-            // Auto-detect and resolve Level of any vehicle against Banned List
             const getCarLevel = (car) => {
                 const brandStr = car.brand || "";
                 const modelStr = car.modelName || "";
@@ -425,7 +397,6 @@
                     return match.level;
                 }
                 
-                // Defaults strictly to Level 0 if not matched in the banned list
                 if (car.level && car.level !== '0' && car.level !== 'Level 0' && car.level !== 'Standard') {
                     return car.level;
                 }
@@ -441,27 +412,25 @@
                 if (lvl === 'BANNED' || lvl === 'PERMBANNED' || lvl === 'PERM BANNED') {
                     return { bg: 'rgba(127, 29, 29, 0.6)', text: '#ff2222', border: '#ef4444', glow: '0 0 10px rgba(239, 68, 68, 0.8)' };
                 }
-                // Solidified standard gray colors for Level 0
                 return { bg: 'rgba(148, 163, 184, 0.15)', text: '#94a3b8', border: 'rgba(148, 163, 184, 0.3)' };
             };
 
-            // Volumetric smooth background gradient mapping (Correcting b1d160.png perfectly)
             const getDynamicGradient = (colorInput) => {
                 const input = (colorInput || "").toLowerCase().trim();
-                let r = 30, g = 35, b = 45; // Subtle Slate base
+                let r = 30, g = 35, b = 45; 
 
                 if (input === 'ruby' || input === 'red' || input === '#c81e32') {
-                    r = 180; g = 10; b = 25;
+                    r = 230; g = 12; b = 32;
                 } else if (input === 'sapphire' || input === 'blue' || input === '#1e50d2') {
-                    r = 15; g = 60; b = 180;
+                    r = 15; g = 90; b = 240;
                 } else if (input === 'green' || input === 'emerald' || input === '#1ea046') {
-                    r = 10; g = 140; b = 45;
+                    r = 10; g = 180; b = 55;
                 } else if (input === 'yellow' || input === 'gold' || input === '#e6c411') {
-                    r = 180; g = 140; b = 10;
+                    r = 220; g = 170; b = 12;
                 } else if (input === 'purple' || input === '#9b59b6') {
-                    r = 120; g = 30; b = 180;
+                    r = 150; g = 35; b = 220;
                 } else if (input === 'orange' || input === '#e67e22') {
-                    r = 180; g = 70; b = 10;
+                    r = 220; g = 85; b = 12;
                 } else if (input.startsWith('#')) {
                     try {
                         const hex = input.replace('#', '');
@@ -473,10 +442,9 @@
                     } catch (e) {}
                 }
 
-                // Tight center vignette with rapid falloff into deep dark slate at edges
                 return {
-                    gradient: `radial-gradient(circle at 50% 50%, rgba(${r}, ${g}, ${b}, 0.32) 0%, rgba(${r}, ${g}, ${b}, 0.12) 30%, rgba(7, 8, 11, 1) 72%)`,
-                    border: `rgba(${r}, ${g}, ${b}, 0.18)`,
+                    gradient: `radial-gradient(circle at 50% 50%, rgba(${r}, ${g}, ${b}, 0.58) 0%, rgba(${r}, ${g}, ${b}, 0.30) 22%, rgba(${r}, ${g}, ${b}, 0.08) 55%, rgba(7, 8, 11, 1) 85%)`,
+                    border: `rgba(${r}, ${g}, ${b}, 0.25)`,
                     rawRGB: `${r}, ${g}, ${b}`
                 };
             };
@@ -667,17 +635,14 @@
                 setGarage([]);
                 localStorage.setItem('gv_cleared', 'true');
                 localStorage.setItem('gv_pro_garage_deck_v13', '[]');
-                showNotification("Garage cleared permanently. Refresh will reload an empty platform.");
+                showNotification("Garage cleared permanently.");
             };
 
             const handleOpenGallery = (car) => {
                 setSelectedGalleryCar(car);
-                setTimerTime(0);
-                setIsTimerRunning(false);
                 setShowGalleryModal(true);
             };
 
-            /* STREAMING_CHUNK: Managing file backup downloads... */
             const handleDownloadLocalBackup = () => {
                 try {
                     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(garage));
@@ -685,9 +650,9 @@
                     dlAnchorElem.setAttribute("href", dataStr);
                     dlAnchorElem.setAttribute("download", `okgarage_backup_${Date.now()}.json`);
                     dlAnchorElem.click();
-                    showNotification("External JSON backup file saved to computer.");
+                    showNotification("Backup saved directly to computer.");
                 } catch (e) {
-                    console.error("Payload compilation error: ", e);
+                    console.error("Backup failed: ", e);
                 }
             };
 
@@ -701,64 +666,15 @@
                         const parsed = JSON.parse(event.target.result);
                         if (Array.isArray(parsed)) {
                             setGarage(parsed);
-                            showNotification("Local backup configuration parsed & injected!");
+                            showNotification("Local backup parsed and restored.");
                         } else {
-                            showNotification("Invalid JSON file layout structure.");
+                            showNotification("Invalid file format.");
                         }
                     } catch (err) {
                         showNotification("Incorrect configuration file format.");
                     }
                 };
                 reader.readAsText(file);
-            };
-
-            /* STREAMING_CHUNK: Managing detailed stopwatch timer logic... */
-            const handleToggleTimer = () => {
-                if (isTimerRunning) {
-                    // STOP the race timer and check if it breaks a personal best
-                    clearInterval(timerRef.current);
-                    setIsTimerRunning(false);
-                    
-                    const finishTime = timerTime;
-                    const prevBest = selectedGalleryCar.bestTime || 0;
-                    if (prevBest === 0 || finishTime < prevBest) {
-                        const updatedGarage = garage.map(c => {
-                            if (c.id === selectedGalleryCar.id) {
-                                const updatedCar = { ...c, bestTime: finishTime };
-                                setSelectedGalleryCar(updatedCar);
-                                return updatedCar;
-                            }
-                            return c;
-                        });
-                        setGarage(updatedGarage);
-                        showNotification(`New Personal Best Run! ⏱️ ${formatTimerTime(finishTime)}`);
-                    } else {
-                        showNotification(`Finished run! ⏱️ ${formatTimerTime(finishTime)}`);
-                    }
-                } else {
-                    // START the race timer
-                    const startTime = Date.now() - timerTime;
-                    timerRef.current = setInterval(() => {
-                        setTimerTime(Date.now() - startTime);
-                    }, 10);
-                    setIsTimerRunning(true);
-                }
-            };
-
-            const handleResetTimer = () => {
-                clearInterval(timerRef.current);
-                setIsTimerRunning(false);
-                setTimerTime(0);
-            };
-
-            const formatTimerTime = (ms) => {
-                const totalSeconds = Math.floor(ms / 1000);
-                const minutes = Math.floor(totalSeconds / 60);
-                const seconds = totalSeconds % 60;
-                const milliseconds = Math.floor((ms % 1000) / 10);
-
-                const pad = (num, size = 2) => ('00' + num).slice(-size);
-                return `${pad(minutes)}:${pad(seconds)}.${pad(milliseconds)}`;
             };
 
             const handleBulkImageUpload = (e) => {
@@ -789,7 +705,7 @@
                                 return c;
                             });
                             setGarage(updatedGarage);
-                            showNotification(`Successfully imported ${newImages.length} fleet image assets.`);
+                            showNotification(`Successfully imported ${newImages.length} images.`);
                         }
                     };
                     reader.readAsDataURL(file);
@@ -891,9 +807,8 @@
                 return 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3';
             }, [splitOffset]);
 
-            // Fixed Sliding Grid Style (Resolving image_3aa104.png perfectly)
+            // Fixed Sliding Grid Style
             const gridStyle = useMemo(() => {
-                // Completely collapse column 1 when dragged to the left edge to trigger 100% full screen
                 const leftColWidth = splitOffset < 5 ? '0px' : `${splitOffset}%`;
                 const rightColWidth = splitOffset > 95 ? '0px' : '1fr';
                 return { gridTemplateColumns: `${leftColWidth} 10px ${rightColWidth}` };
@@ -910,7 +825,7 @@
                         </div>
                     )}
 
-                    {/* Persistent Snapping Reset Toggles (Resolving image_3aa104.png completely) */}
+                    {/* Persistent Snapping Reset Toggles */}
                     <div className="fixed top-4 right-10 z-[80] flex items-center gap-3">
                         {splitOffset < 15 && (
                             <button onClick={() => setSplitOffset(50)} className="px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 rounded-full text-xs font-bold transition-all text-emerald-400 animate-pulse">
@@ -929,7 +844,6 @@
                             <h1 className="text-xl font-extrabold tracking-tight font-['Montserrat'] bg-gradient-to-r from-white via-white/80 to-white/60 bg-clip-text text-transparent">Greenville Pro Garage</h1>
                         </div>
                         <div className="flex gap-3">
-                            {/* File Upload / JSON Drag backup trigger actions */}
                             <button onClick={handleDownloadLocalBackup} className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5" title="Download backup file directly to computer">
                                 📥 Export JSON Data
                             </button>
@@ -947,13 +861,13 @@
                         </div>
                     </header>
 
-                    {/* Primary Split Window Workspace (Locked with explicit column spans to prevent black screen image_3aa104.png) */}
+                    {/* Primary Split Window Workspace */}
                     <div 
                         className="flex-1 w-full max-w-[1720px] mx-auto px-10 pb-10 grid relative select-none min-h-0"
                         style={gridStyle}
                     >
                         
-                        {/* LEFT WINDOW: BVE Registry Database (Conditionally hides completely on layout drag < 15) */}
+                        {/* LEFT WINDOW: BVE Registry Database */}
                         {splitOffset >= 5 && (
                             <div style={{ gridColumn: '1' }} className="flex flex-col h-full overflow-hidden pr-3">
                                 <div className="mb-4 flex flex-wrap justify-between items-end gap-3">
@@ -968,7 +882,7 @@
                                                     key={lvl}
                                                     type="button"
                                                     onClick={() => setBveLevelFilter(lvl)}
-                                                    className={`px-3 py-1 rounded-[8px] font-medium transition-all ${bveLevelFilter === lvl ? 'bg-white/10 text-white shadow' : 'text-white/50 hover:text-white/80'}`}
+                                                    className={`px-3 py-1 rounded-[8px] font-medium transition-all whitespace-nowrap ${bveLevelFilter === lvl ? 'bg-white/10 text-white shadow' : 'text-white/50 hover:text-white/80'}`}
                                                 >
                                                     {lvl}
                                                 </button>
@@ -1009,11 +923,11 @@
                                                         onMouseEnter={() => setHoveredBveIndex(idx)}
                                                         onMouseLeave={() => setHoveredBveIndex(null)}
                                                         style={{ background: spec.gradient, borderColor: spec.border }}
-                                                        className="group relative rounded-2xl p-5 border transition-all card-transition h-[270px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer"
+                                                        className="group relative rounded-2xl p-5 border transition-all card-transition h-[340px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer"
                                                         onClick={() => handleOpenGallery(ownedCar)}
                                                     >
                                                         <div className="relative z-10 pr-1">
-                                                            {/* Symmetrical Apple layout mirroring image_b06c66.png perfectly without truncation */}
+                                                            {/* Apple specs alignment matching image_588a20.png */}
                                                             <div className="grid grid-cols-3 gap-1 mb-2">
                                                                 <div>
                                                                     <div className="text-[9px] text-white/40 font-bold uppercase tracking-wider mb-0.5">Year</div>
@@ -1033,20 +947,27 @@
                                                                     </span>
                                                                 </div>
                                                             </div>
-                                                            {/* Trim underneath to lock layout */}
                                                             <div className="text-[10px] text-white/50 font-bold leading-none mt-1">
                                                                 {ownedCar.trim && `Trim: ${ownedCar.trim}`}
                                                             </div>
                                                         </div>
 
-                                                        {/* Centered Silhouette Icon */}
-                                                        <div className="absolute top-[52%] left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-0">
-                                                            <span className="material-symbols-outlined text-white/10 transform scale-[1.3] select-none">
-                                                                directions_car
-                                                            </span>
+                                                        {/* Transparent container removes the dark box behind transparent PNG covers (Solving image_589d08.png) */}
+                                                        <div className="absolute top-[85px] left-1/2 -translate-x-1/2 pointer-events-none z-0">
+                                                            {ownedCar.image ? (
+                                                                <div className="w-[250px] h-[140px] rounded-lg overflow-hidden bg-transparent flex items-center justify-center">
+                                                                    <img src={ownedCar.image} alt="active cover" className="w-full h-full object-contain" />
+                                                                </div>
+                                                            ) : (
+                                                                <div className="w-24 h-24 flex items-center justify-center relative">
+                                                                    <span className="material-symbols-outlined text-white/10 transform scale-[1.3] select-none">
+                                                                        directions_car
+                                                                    </span>
+                                                                </div>
+                                                            )}
                                                         </div>
 
-                                                        {/* Bottom Stats and Tags - Absolutely Pinned to Prevent Pushdown */}
+                                                        {/* Bottom Stats and Tags */}
                                                         <div className="absolute bottom-5 left-5 right-5 z-10 flex flex-col gap-2 bg-transparent">
                                                             <div className="grid grid-cols-2 gap-x-2 pt-1 border-t border-white/[0.04]">
                                                                 <div>
@@ -1120,7 +1041,7 @@
                             </div>
                         )}
 
-                        {/* WORKSPACE SEPARATOR HANDLE (Always visible and interactive to prevent slide collapses) */}
+                        {/* WORKSPACE SEPARATOR HANDLE */}
                         <div 
                             onMouseDown={handleMouseDown}
                             style={{ gridColumn: '2' }}
@@ -1132,21 +1053,18 @@
                             </div>
                         </div>
 
-                        {/* RIGHT WINDOW: Owned Vehicle Fleet Deck (Takes up 100% space if slider collapses to left < 15) */}
+                        {/* RIGHT WINDOW: My Garage */}
                         {splitOffset <= 95 && (
                             <div style={{ gridColumn: '3' }} className="flex flex-col h-full overflow-hidden pl-3">
                                 
-                                {/* Header Layout directly mirroring image_255a77.png & image_0ce910.png */}
                                 <div className="mb-4 flex flex-wrap justify-between items-end gap-3">
                                     <div>
                                         <h2 className="text-xl font-extrabold font-['Montserrat']">My Garage</h2>
                                         <p className="text-xs text-white/40 mt-1 font-medium">showing {sortedGarage.length} of {garage.length}+</p>
                                     </div>
 
-                                    {/* Segmented sorting pills & Dropdown filtering */}
                                     <div className="flex items-center gap-2 flex-wrap">
                                         
-                                        {/* Premium Segmented pill buttons matching image_0ce910.png */}
                                         <div className="bg-[#ffffff]/[0.05] rounded-xl p-1 border border-white/[0.06] flex items-center gap-1 h-9 text-xs flex-wrap">
                                             {['Year', 'Make', 'Sell Price', 'HP', 'Top Speed'].map((cat) => (
                                                 <button 
@@ -1159,7 +1077,6 @@
                                             ))}
                                         </div>
 
-                                        {/* Star toggle */}
                                         <button 
                                             onClick={() => setShowOnlyFavorites(!showOnlyFavorites)}
                                             className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-all ${showOnlyFavorites ? 'bg-[#ffd60a]/10 border-[#ffd60a]/30 text-[#ffd60a]' : 'bg-[#ffffff]/[0.05] border-white/[0.06]'}`}
@@ -1167,7 +1084,6 @@
                                             ★
                                         </button>
 
-                                        {/* Dropdown button to filter by Level category */}
                                         <div className="relative">
                                             <button 
                                                 onClick={() => { setIsLevelDropdownOpen(!isLevelDropdownOpen); setIsColorDropdownOpen(false); }}
@@ -1197,7 +1113,6 @@
                                             )}
                                         </div>
 
-                                        {/* Dropdown button to filter by color properties */}
                                         <div className="relative">
                                             <button 
                                                 onClick={() => { setIsColorDropdownOpen(!isColorDropdownOpen); setIsLevelDropdownOpen(false); }}
@@ -1242,7 +1157,6 @@
                                     />
                                 </div>
 
-                                {/* Garage Fleet Card Grid Layout */}
                                 <div className="flex-1 overflow-y-auto pl-1 pr-1 pb-4 space-y-4 smooth-scroll">
                                     <div className={`grid gap-4 ${garageGridClass}`}>
                                         {sortedGarage.map(car => {
@@ -1261,9 +1175,9 @@
                                                     onMouseLeave={() => setHoveredCardId(null)}
                                                     onClick={() => handleOpenGallery(car)}
                                                     style={{ background: spec.gradient, borderColor: spec.border }}
-                                                    className="group relative rounded-2xl p-5 border transition-all card-transition h-[270px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer"
+                                                    className="group relative rounded-2xl p-5 border transition-all card-transition h-[340px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer"
                                                 >
-                                                    {/* Top Header section - pr-2 gives breathing room to level badge */}
+                                                    {/* Top Header section */}
                                                     <div className="relative z-10 pr-1">
                                                         <div className="flex justify-between items-start gap-2">
                                                             <div className="flex-1 min-w-0">
@@ -1279,7 +1193,6 @@
                                                                         </div>
                                                                     </div>
                                                                 </div>
-                                                                {/* Trim placed cleanly on its own row below year and name */}
                                                                 <div className="text-[10px] text-white/60 font-semibold mt-1">
                                                                     {car.trim && `Trim: ${car.trim}`}
                                                                 </div>
@@ -1296,22 +1209,22 @@
                                                         </div>
                                                     </div>
 
-                                                    {/* Centered Silhouette Icon / Active transparent image (Resolving transparency glitch perfectly) */}
-                                                    <div className="absolute top-[52%] left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-0">
+                                                    {/* Transparent background completely removes black/dark grey rectangle tints (Solving image_589d08.png) */}
+                                                    <div className="absolute top-[85px] left-1/2 -translate-x-1/2 pointer-events-none z-0">
                                                         {car.image ? (
-                                                            <div className="w-[140px] h-[80px] rounded-lg overflow-hidden bg-transparent flex items-center justify-center">
+                                                            <div className="w-[250px] h-[140px] rounded-lg overflow-hidden bg-transparent flex items-center justify-center">
                                                                 <img src={car.image} alt="active cover" className="w-full h-full object-contain" />
                                                             </div>
                                                         ) : (
                                                             <div className="w-24 h-24 flex items-center justify-center relative">
-                                                                <span className="material-symbols-outlined text-white/10 transform scale-[1.3] select-none">
+                                                                <span className="material-symbols-outlined text-white/10 transform scale-[1.5] select-none">
                                                                     directions_car
                                                                 </span>
                                                             </div>
                                                         )}
                                                     </div>
 
-                                                    {/* Bottom stats and tags - Absolutely pinned to bottom to prevent pushdown */}
+                                                    {/* Bottom stats and tags */}
                                                     <div className="absolute bottom-5 left-5 right-5 z-10 flex flex-col gap-2 bg-transparent">
                                                         <div className="grid grid-cols-2 gap-x-2 pt-1 border-t border-white/[0.04]">
                                                             <div>
@@ -1332,7 +1245,6 @@
                                                             </div>
                                                         </div>
 
-                                                        {/* Displaying Greenville Saved Tags exclusively */}
                                                         <div className="flex items-center justify-between h-[18px]">
                                                             <div className="flex gap-1.5 overflow-hidden whitespace-nowrap">
                                                                 {(car.tags && car.tags.length > 0) ? (
@@ -1403,7 +1315,7 @@
                         </div>
                     )}
 
-                    {/* Immersive FULL-SCREEN Scrollable Layout Overlay */}
+                    {/* Immersive detailed overlay */}
                     {showGalleryModal && selectedGalleryCar && (() => {
                         const spec = getDynamicGradient(selectedGalleryCar.color);
                         const resolvedLevel = getCarLevel(selectedGalleryCar);
@@ -1438,136 +1350,120 @@
                                     </button>
                                 </header>
 
-                                {/* Gallery Main Content Scrollable Workspace */}
-                                <div className="flex-1 px-12 py-8 z-10 flex flex-col items-center gap-10 max-w-[1200px] mx-auto w-full relative">
+                                {/* Redesigned Workspace: Side-by-Side Left Specs & Center Spotlight Card */}
+                                <div className="flex-1 px-12 py-8 z-10 flex flex-col items-center max-w-[1200px] mx-auto w-full relative">
                                     
-                                    {/* Spotlight Vehicle: Identical to card look inside My Garage but larger */}
-                                    <div 
-                                        style={{ background: spec.gradient, borderColor: spec.border }}
-                                        className="w-full max-w-[500px] rounded-3xl p-8 border transition-all card-transition relative shadow-2xl h-[340px]"
-                                    >
-                                        <div className="relative z-10">
-                                            <div className="flex justify-between items-start gap-4">
-                                                <div>
-                                                    <div className="flex gap-6">
+                                    <div className="flex flex-col lg:flex-row items-start justify-center gap-10 w-full mb-12">
+                                        {/* LEFT SIDE: Technical & Track Performance Specs Panel */}
+                                        <div className="w-full lg:w-[40%] bg-white/[0.02] border border-white/5 p-6 rounded-3xl flex flex-col gap-4">
+                                            <h4 className="text-xs font-black uppercase tracking-wider text-emerald-400">Track & Performance Specs</h4>
+                                            <div className="grid grid-cols-1 gap-3">
+                                                <div className="bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl">
+                                                    <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-0.5">Top Speed</span>
+                                                    <span className="text-lg font-black text-white">{selectedGalleryCar.topSpeed} mph</span>
+                                                </div>
+                                                <div className="bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl">
+                                                    <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-0.5">Buy Price</span>
+                                                    <span className="text-lg font-black text-emerald-400">${selectedGalleryCar.cost?.toLocaleString()}</span>
+                                                </div>
+                                                <div className="bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl">
+                                                    <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-0.5">Horsepower</span>
+                                                    <span className="text-lg font-black text-white">{selectedGalleryCar.horsepower} HP</span>
+                                                </div>
+                                                <div className="bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl">
+                                                    <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-0.5">Estimated Sell Price</span>
+                                                    <span className="text-lg font-black text-red-400">${estimatedSell?.toLocaleString()}</span>
+                                                </div>
+                                                <div className="bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl">
+                                                    <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-0.5">Odometer Miles</span>
+                                                    <span className="text-lg font-black text-white">{Number(selectedGalleryCar.miles || 0).toLocaleString()} mi</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* RIGHT SIDE: Centered, Non-Stretched Spotlight Card */}
+                                        <div className="w-full lg:w-[60%] flex flex-col gap-8 items-center">
+                                            <div 
+                                                style={{ background: spec.gradient, borderColor: spec.border }}
+                                                className="w-full max-w-[420px] rounded-3xl p-6 border transition-all card-transition relative shadow-2xl h-[340px] overflow-hidden"
+                                            >
+                                                <div className="relative z-10">
+                                                    <div className="flex justify-between items-start gap-4">
                                                         <div>
-                                                            <div className="text-[10px] text-white/40 font-bold uppercase tracking-wider mb-0.5">Year</div>
-                                                            <div className="text-sm font-bold text-white leading-none mb-1">{selectedGalleryCar.year}</div>
-                                                        </div>
-                                                        <div>
-                                                            <div className="text-[10px] text-white/40 font-bold uppercase tracking-wider mb-0.5">Model</div>
-                                                            <div className="text-sm font-bold text-white leading-tight">
-                                                                {selectedGalleryCar.brand} {selectedGalleryCar.modelName}
+                                                            <div className="flex gap-6">
+                                                                <div>
+                                                                    <div className="text-[10px] text-white/40 font-bold uppercase tracking-wider mb-0.5">Year</div>
+                                                                    <div className="text-xs font-bold text-white leading-none mb-1">{selectedGalleryCar.year}</div>
+                                                                </div>
+                                                                <div>
+                                                                    <div className="text-[10px] text-white/40 font-bold uppercase tracking-wider mb-0.5">Model</div>
+                                                                    <div className="text-xs font-bold text-white leading-tight">
+                                                                        {selectedGalleryCar.brand} {selectedGalleryCar.modelName}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                            <div className="text-[11px] text-white/60 font-semibold mt-1">
+                                                                {selectedGalleryCar.trim && `Trim: ${selectedGalleryCar.trim}`}
                                                             </div>
                                                         </div>
+                                                        <div className="text-right">
+                                                            <div className="text-[10px] text-white/40 font-bold uppercase tracking-wider mb-0.5">Level</div>
+                                                            <span 
+                                                                style={{ backgroundColor: badgeStyles.bg, color: badgeStyles.text, borderColor: badgeStyles.border, boxShadow: badgeStyles.glow || 'none' }}
+                                                                className="text-[11px] font-bold px-2.5 py-0.5 rounded border uppercase tracking-wider"
+                                                            >
+                                                                    {resolvedLevel === 'Level 0' ? '0' : resolvedLevel}
+                                                            </span>
+                                                        </div>
                                                     </div>
-                                                    <div className="text-[11px] text-white/60 font-semibold mt-1">
-                                                        {selectedGalleryCar.trim && `Trim: ${selectedGalleryCar.trim}`}
-                                                    </div>
                                                 </div>
-                                                <div className="text-right">
-                                                    <div className="text-[10px] text-white/40 font-bold uppercase tracking-wider mb-0.5">Level</div>
-                                                    <span 
-                                                        style={{ backgroundColor: badgeStyles.bg, color: badgeStyles.text, borderColor: badgeStyles.border, boxShadow: badgeStyles.glow || 'none' }}
-                                                        className="text-[11px] font-bold px-2.5 py-0.5 rounded border uppercase tracking-wider"
-                                                    >
-                                                        {resolvedLevel === 'Level 0' ? '0' : resolvedLevel}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </div>
 
-                                        <div className="absolute top-[52%] left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-0">
-                                            {selectedGalleryCar.image ? (
-                                                <div className="w-[200px] h-[120px] rounded-xl overflow-hidden bg-transparent flex items-center justify-center">
-                                                    <img src={selectedGalleryCar.image} alt="active cover" className="w-full h-full object-contain" />
-                                                </div>
-                                            ) : (
-                                                <span className="material-symbols-outlined text-white/10 transform scale-[1.8] select-none">
-                                                    directions_car
-                                                </span>
-                                            )}
-                                        </div>
-
-                                        <div className="absolute bottom-8 left-8 right-8 z-10 flex flex-col gap-3">
-                                            <div className="grid grid-cols-2 gap-x-4 pt-2 border-t border-white/[0.04]">
-                                                <div>
-                                                    <span className="text-[11px] text-white/40 font-bold uppercase tracking-wider block mb-0.5">Top Speed</span>
-                                                    <span className="text-sm font-bold text-white block">{selectedGalleryCar.topSpeed} mph</span>
-                                                </div>
-                                                <div>
-                                                    <span className="text-[11px] text-white/40 font-bold uppercase tracking-wider block mb-0.5">Buy Price</span>
-                                                    <span className="text-sm font-bold text-emerald-400 block">${selectedGalleryCar.cost.toLocaleString()}</span>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex gap-2">
-                                                    {(selectedGalleryCar.tags && selectedGalleryCar.tags.length > 0) ? (
-                                                        selectedGalleryCar.tags.map(tag => {
-                                                            const styles = getGreenvilleTagStyles(tag);
-                                                            return (
-                                                                <span 
-                                                                    key={tag} 
-                                                                    style={{ backgroundColor: styles.bg, color: styles.text, borderColor: styles.border }}
-                                                                    className="text-[10px] px-2.5 py-0.5 rounded-full font-bold border"
-                                                                >
-                                                                    {tag}
-                                                                </span>
-                                                            );
-                                                        })
+                                                {/* Transparent background completely removes black/dark grey rectangle tints (Solving image_589d9e.jpg) */}
+                                                <div className="absolute top-[85px] left-1/2 -translate-x-1/2 pointer-events-none z-0">
+                                                    {selectedGalleryCar.image ? (
+                                                        <div className="w-[320px] h-[195px] rounded-xl overflow-hidden bg-transparent flex items-center justify-center">
+                                                            <img src={selectedGalleryCar.image} alt="active cover" className="w-full h-full object-contain" />
+                                                        </div>
                                                     ) : (
-                                                        <span className="text-[10px] text-white/20 italic">No tags</span>
+                                                        <span className="material-symbols-outlined text-white/10 transform scale-[1.8] select-none">
+                                                            directions_car
+                                                        </span>
+                                                    )}
+                                                </div>
+
+                                                <div className="absolute bottom-5 left-6 right-6 z-10 flex items-center justify-between border-t border-white/[0.04] pt-2">
+                                                    <div className="flex gap-2">
+                                                        {(selectedGalleryCar.tags && selectedGalleryCar.tags.length > 0) ? (
+                                                            selectedGalleryCar.tags.map(tag => {
+                                                                const styles = getGreenvilleTagStyles(tag);
+                                                                return (
+                                                                    <span 
+                                                                        key={tag} 
+                                                                        style={{ backgroundColor: styles.bg, color: styles.text, borderColor: styles.border }}
+                                                                        className="text-[10px] px-2.5 py-0.5 rounded-full font-bold border"
+                                                                    >
+                                                                        {tag}
+                                                                    </span>
+                                                                );
+                                                            })
+                                                        ) : (
+                                                            <span className="text-[10px] text-white/20 italic">No tags</span>
+                                                        )}
+                                                    </div>
+                                                    {selectedGalleryCar.favorite && (
+                                                        <span className="text-[10px] text-[#ffd60a] font-bold">★</span>
                                                     )}
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
 
-                                    {/* Racing Stopwatch Control Panel (Integrated directly below card spotlight) */}
-                                    <div className="w-full max-w-[500px] bg-white/[0.02] border border-white/5 p-6 rounded-3xl flex flex-col items-center gap-4">
-                                        <div className="flex justify-between items-center w-full pb-2 border-b border-white/[0.05]">
-                                            <span className="text-[11px] font-black uppercase tracking-wider text-white/40 flex items-center gap-1.5">
-                                                ⏱️ Track Race Performance StopWatch
-                                            </span>
-                                            {selectedGalleryCar.bestTime ? (
-                                                <span className="text-[10px] font-bold text-[#ffd60a] bg-[#ffd60a]/10 border border-[#ffd60a]/20 px-2 py-0.5 rounded-lg flex items-center gap-1">
-                                                    🏆 PB: {formatTimerTime(selectedGalleryCar.bestTime)}
-                                                </span>
-                                            ) : (
-                                                <span className="text-[10px] text-white/20 italic">No runs yet</span>
-                                            )}
-                                        </div>
-
-                                        <div className="text-4xl font-black font-mono tracking-tight text-white/95 py-2">
-                                            {formatTimerTime(timerTime)}
-                                        </div>
-
-                                        <div className="flex items-center gap-3 w-full">
-                                            <button 
-                                                onClick={handleToggleTimer}
-                                                className={`flex-1 py-3 px-5 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 transition-all shadow-lg ${
-                                                    isTimerRunning 
-                                                        ? 'bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-red-400' 
-                                                        : 'bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-400'
-                                                }`}
-                                            >
-                                                <span>{isTimerRunning ? '🛑 Stop Run' : '🏁 Start Run'}</span>
-                                            </button>
-                                            <button 
-                                                onClick={handleResetTimer}
-                                                className="py-3 px-5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-black uppercase tracking-widest transition-all"
-                                            >
-                                                🔄 Reset
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    {/* Album Photos Section directly under the spotlight */}
-                                    <div className="w-full bg-white/[0.02] border border-white/5 p-8 rounded-3xl flex flex-col">
-                                        <div className="flex justify-between items-center mb-6 pb-4 border-b border-white/[0.05]">
+                                    {/* Unboxed Giant Alternating Photo Album (Resolving layout request) */}
+                                    <div className="w-full flex flex-col">
+                                        <div className="flex justify-between items-center mb-10 pb-4 border-b border-white/[0.05]">
                                             <div>
-                                                <h4 className="text-sm font-black uppercase tracking-wider">Photo Album ({selectedGalleryCar.images?.length || 0})</h4>
-                                                <p className="text-[10px] text-white/40 font-bold mt-1">BULK IMPORT PLATFORM</p>
+                                                <h4 className="text-xl font-black uppercase tracking-wider font-['Montserrat']">Photo Album ({selectedGalleryCar.images?.length || 0})</h4>
+                                                <p className="text-xs text-white/40 font-bold mt-1">STAGGERED HIGH-RESOLUTION FLUID SYSTEM</p>
                                             </div>
                                             <div>
                                                 <input 
@@ -1588,29 +1484,51 @@
                                         </div>
 
                                         {selectedGalleryCar.images && selectedGalleryCar.images.length > 0 ? (
-                                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                            <div className="flex flex-col gap-12 w-full mt-6">
                                                 {selectedGalleryCar.images.map((img, idx) => {
+                                                    const isEven = idx % 2 === 0;
                                                     const isActive = selectedGalleryCar.image === img;
                                                     return (
                                                         <div 
                                                             key={idx}
-                                                            className={`relative aspect-video rounded-xl overflow-hidden border bg-black/40 cursor-pointer group/item transition-all ${isActive ? 'border-emerald-500 ring-4 ring-emerald-500/20 scale-[1.02]' : 'border-white/5 hover:border-white/20'}`}
-                                                            onClick={() => handleSelectActiveCover(img)}
+                                                            className={`flex flex-col md:flex-row items-center gap-10 w-full ${isEven ? 'md:flex-row' : 'md:flex-row-reverse'}`}
                                                         >
-                                                            <img src={img} alt={`album-${idx}`} className="w-full h-full object-cover" />
-                                                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/item:opacity-100 flex items-center justify-center transition-all duration-300">
-                                                                <span className="text-[9px] font-black uppercase tracking-widest text-white bg-black/80 px-2.5 py-1.5 rounded-lg border border-white/10">Set Cover</span>
-                                                            </div>
-                                                            <button 
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    handleDeleteImageFromGallery(idx);
-                                                                }}
-                                                                className="absolute top-2 right-2 w-8 h-8 bg-red-600 hover:bg-red-500 rounded-full flex items-center justify-center text-xs text-white font-bold transition-colors opacity-0 group-hover/item:opacity-100 shadow-lg z-20"
-                                                                title="Remove Image"
+                                                            {/* Large Photo Display Box - 100% Transparent Background */}
+                                                            <div 
+                                                                onClick={() => handleSelectActiveCover(img)}
+                                                                className={`relative w-full md:w-[65%] aspect-[16/10] rounded-3xl overflow-hidden border bg-transparent cursor-pointer group/item transition-all ${isActive ? 'border-emerald-500 ring-4 ring-emerald-500/20 scale-[1.01]' : 'border-white/10 hover:border-white/30'}`}
                                                             >
-                                                                ✕
-                                                            </button>
+                                                                <img src={img} alt={`album-${idx}`} className="w-full h-full object-cover" />
+                                                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/item:opacity-100 flex items-center justify-center transition-all duration-300">
+                                                                    <span className="text-xs font-black uppercase tracking-widest text-white bg-black/80 px-4 py-2.5 rounded-xl border border-white/10">Set Cover</span>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Photo Details and Management Controls */}
+                                                            <div className="w-full md:w-[35%] flex flex-col justify-center items-start gap-4 px-4">
+                                                                <span className="text-[10px] text-white/30 font-extrabold uppercase tracking-widest">
+                                                                    Asset Registry Index #{idx + 1}
+                                                                </span>
+                                                                <h5 className="text-lg font-bold text-white">
+                                                                    {isActive ? '🏆 Current Cover Image' : 'Fleet Gallery Asset'}
+                                                                </h5>
+                                                                <div className="flex gap-2.5 mt-2">
+                                                                    {!isActive && (
+                                                                        <button 
+                                                                            onClick={() => handleSelectActiveCover(img)}
+                                                                            className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all text-white/80"
+                                                                        >
+                                                                            Use as Cover
+                                                                        </button>
+                                                                    )}
+                                                                    <button 
+                                                                        onClick={() => handleDeleteImageFromGallery(idx)}
+                                                                        className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all"
+                                                                    >
+                                                                        Delete Photo
+                                                                    </button>
+                                                                </div>
+                                                            </div>
                                                         </div>
                                                     );
                                                 })}
