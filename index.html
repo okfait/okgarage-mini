@@ -6,6 +6,7 @@
     <title>okGARAGE - mini</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
     
+    <!-- React and Tailwind Frameworks -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.3/babel.min.js" crossorigin></script>
@@ -36,6 +37,7 @@
             transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
         }
         
+        /* Floating sphere animations */
         @keyframes floatSpheres {
             0% { transform: translateY(110%) translateX(0) scale(1); opacity: 0; }
             20% { opacity: var(--max-opacity, 0.35); }
@@ -53,6 +55,7 @@
             z-index: 1;
         }
 
+        /* Staggered card entry animations */
         @keyframes cascadeIn {
             0% { opacity: 0; transform: translateY(15px) scale(0.97); }
             100% { opacity: 1; transform: translateY(0) scale(1); }
@@ -61,6 +64,7 @@
             animation: cascadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
         }
 
+        /* Fluid modal window transitions */
         @keyframes modalEntrance {
             0% { opacity: 0; transform: scale(0.95) translateY(10px); }
             100% { opacity: 1; transform: scale(1) translateY(0); }
@@ -88,9 +92,23 @@
 <body>
     <div id="root"></div>
 
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Expose Firebase elements globally for Babel React mapping
+        window.FirebaseCore = {
+            initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
+            getFirestore, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query, getDocs
+        };
+        window.dispatchEvent(new Event('firebase-ready'));
+    </script>
+
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
+        // Fully completed BVE database matching all supplied registry files
         const BANNED_DATABASE = [
             // Level 1 BVE Database
             { name: "1974 Lancia Stratos HF Stradale", level: "L1" },
@@ -319,6 +337,39 @@
             { name: "10' x 6' Concrete Mixer", level: "Permbanned" }
         ];
 
+        const compressBase64 = (base64Str, maxWidth = 640, maxHeight = 480) => {
+            return new Promise((resolve) => {
+                if (!base64Str || !base64Str.startsWith("data:image")) {
+                    resolve(base64Str);
+                    return;
+                }
+                const img = new Image();
+                img.src = base64Str;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    let width = img.width;
+                    let height = img.height;
+                    
+                    if (width > maxWidth) {
+                        height = Math.round((height * maxWidth) / width);
+                        width = maxWidth;
+                    }
+                    if (height > maxHeight) {
+                        width = Math.round((width * maxHeight) / height);
+                        height = maxHeight;
+                    }
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, width, height); // Clear so transparent PNG stays fully transparent!
+                    ctx.drawImage(img, 0, 0, width, height);
+                    resolve(canvas.toDataURL('image/png')); // Output to PNG to preserve alpha transparency!
+                };
+                img.onerror = () => resolve(base64Str);
+            });
+        };
+
         const generateFailsafeLore = (car, sectionName) => {
             const brand = car.brand || "Concept";
             const model = car.modelName || "Machine";
@@ -418,28 +469,25 @@
         };
 
         function App() {
-            // Multi-Key storage system to keep local collection safe across updates and downloaded copies
-            const STORAGE_KEYS = [
+            // Robust storage configuration
+            const PRIMARY_STORAGE_KEY = 'okgarage_mini_fleet_v15';
+            const FALLBACK_KEYS = [
+                'okgarage_mini_fleet_v13',
+                'okgarage_mini_fleet',
                 'gv_pro_garage_deck_v13',
-                'gv_pro_garage_deck_v10',
-                'gv_pro_garage_deck_v12',
-                'gv_pro_garage_deck_v1',
-                'okgarage_mini_fleet'
+                'gv_pro_garage_deck_v10'
             ];
 
             const [garage, setGarage] = useState([]);
             const [isInitialized, setIsInitialized] = useState(false);
+            const [cloudSavingActive, setCloudSavingActive] = useState(false);
 
-            // State management for custom vignette palette registration
+            // Theme context states
             const [palette, setPalette] = useState(() => {
                 try {
                     const saved = localStorage.getItem('okgarage_color_palette');
-                    if (saved) {
-                        return JSON.parse(saved);
-                    }
-                } catch (e) {
-                    console.warn(e);
-                }
+                    if (saved) return JSON.parse(saved);
+                } catch (e) {}
                 return [
                     { name: "Red", hex: "#c81e32" },
                     { name: "Blue", hex: "#1e50d2" },
@@ -452,122 +500,15 @@
             });
 
             const [customHex, setCustomHex] = useState('#5a5f6e');
-
             const [geminiKey, setGeminiKey] = useState(() => {
-                try {
-                    return localStorage.getItem('gemini_api_key') || '';
-                } catch (e) {
-                    return '';
-                }
+                try { return localStorage.getItem('gemini_api_key') || ''; } catch (e) { return ''; }
             });
 
-            // Dual-phase initialization effect to safely pull and construct saved fleet profiles
-            useEffect(() => {
-                let loadedGarage = null;
-                try {
-                    const cleared = localStorage.getItem('gv_cleared');
-                    if (cleared === 'true') {
-                        loadedGarage = [];
-                    } else {
-                        // Scan all key namespaces to recover past collections
-                        for (const key of STORAGE_KEYS) {
-                            const saved = localStorage.getItem(key);
-                            if (saved) {
-                                try {
-                                    const parsed = JSON.parse(saved);
-                                    if (Array.isArray(parsed) && parsed.length > 0) {
-                                        loadedGarage = parsed;
-                                        break; // Find first valid save and mount it
-                                    }
-                                } catch (e) {
-                                    console.error(e);
-                                }
-                            }
-                        }
-                    }
-                } catch (e) {
-                    console.warn("Storage access failed or blocked during initialization:", e);
-                }
-
-                if (loadedGarage !== null) {
-                    setGarage(loadedGarage);
-                } else {
-                    // Fallback baseline fleet
-                    const defaults = [
-                        {
-                            id: 1,
-                            year: "2024",
-                            brand: "Lotus",
-                            modelName: "Emira",
-                            trim: "First Edition",
-                            color: "Sapphire",
-                            cost: 95000,
-                            miles: 1420,
-                            horsepower: 400,
-                            favorite: true,
-                            topSpeed: 180,
-                            level: "L1",
-                            tags: ["Off-Sale"],
-                            images: []
-                        },
-                        {
-                            id: 2,
-                            year: "2026",
-                            brand: "Western",
-                            modelName: "Protogen-X",
-                            trim: "Dual-Core",
-                            color: "Ruby",
-                            cost: 320000,
-                            miles: 24,
-                            horsepower: 750,
-                            favorite: false,
-                            topSpeed: 210,
-                            level: "L1",
-                            tags: ["Limited", "Collectible"],
-                            images: []
-                        }
-                    ];
-                    setGarage(defaults.map(car => ({
-                        ...car,
-                        loreMap: {
-                            ENGINE: generateFailsafeLore(car, "ENGINE"),
-                            AERODYNAMICS: generateFailsafeLore(car, "AERODYNAMICS"),
-                            DESIGN: generateFailsafeLore(car, "DESIGN"),
-                            PERFORMANCE: generateFailsafeLore(car, "PERFORMANCE"),
-                            LEGACY: generateFailsafeLore(car, "LEGACY")
-                        }
-                    })));
-                }
-                setIsInitialized(true);
-            }, []);
-
-            // Save updates safely to persistent keys after mounting verification
-            useEffect(() => {
-                if (!isInitialized) return;
-                try {
-                    if (garage.length === 0) {
-                        localStorage.setItem('gv_cleared', 'true');
-                        STORAGE_KEYS.forEach(key => localStorage.setItem(key, '[]'));
-                    } else {
-                        localStorage.removeItem('gv_cleared');
-                        STORAGE_KEYS.forEach(key => {
-                            localStorage.setItem(key, JSON.stringify(garage));
-                        });
-                    }
-                } catch (error) {
-                    console.error("Payload synchronization caching failure:", error);
-                }
-            }, [garage, isInitialized]);
-
-            useEffect(() => {
-                try {
-                    localStorage.setItem('gemini_api_key', geminiKey);
-                } catch (e) {}
-            }, [geminiKey]);
-
+            // Layout split parameters
             const [splitOffset, setSplitOffset] = useState(50);
             const [isDragging, setIsDragging] = useState(false);
 
+            // Filtering query boundaries
             const [bveSearch, setBveSearch] = useState('');
             const [bveLevelFilter, setBveLevelFilter] = useState('All');
             const [garageSearch, setGarageSearch] = useState('');
@@ -580,12 +521,11 @@
             const [levelFilter, setLevelFilter] = useState('All Levels');
             const [isLevelDropdownOpen, setIsLevelDropdownOpen] = useState(false);
 
+            // Dynamic interaction tracking
             const [hoveredCardId, setHoveredCardId] = useState(null);
             const [hoveredBveIndex, setHoveredBveIndex] = useState(null);
-
             const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, carId: null });
             
-            // Modal transition wrapper states
             const [addEditModalState, setAddEditModalState] = useState({ isRendered: false, isVisible: false });
             const [galleryModalState, setGalleryModalState] = useState({ isRendered: false, isVisible: false });
             
@@ -594,21 +534,201 @@
 
             const [selectedGalleryCar, setSelectedGalleryCar] = useState(null);
             const bulkFileInputRef = useRef(null);
-
             const paletteCanvasRef = useRef(null);
             const [sampledPicData, setSampledPicData] = useState(null);
 
+            // Stop watch states
             const [isLapRunning, setIsLapRunning] = useState(false);
             const [lapTime, setLapTime] = useState(0);
             const lapTimerRef = useRef(null);
 
-            // Dynamic capsule tracker styles
+            // Sliding animation anchors
             const sortRefs = useRef({});
             const [sortPillStyle, setSortPillStyle] = useState({ left: 0, width: 0 });
-
             const bveFilterRefs = useRef({});
             const [bveFilterPillStyle, setBveFilterPillStyle] = useState({ left: 0, width: 0 });
 
+            useEffect(() => {
+                const initSync = async () => {
+                    const appId = typeof __app_id !== 'undefined' ? __app_id : 'okgarage-mini-app';
+                    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+                    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+                    if (firebaseConfig && window.FirebaseCore) {
+                        const { initializeApp, getFirestore, getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, collection, query, onSnapshot } = window.FirebaseCore;
+                        try {
+                            const app = initializeApp(firebaseConfig);
+                            const db = getFirestore(app);
+                            const auth = getAuth(app);
+
+                            setCloudSavingActive(true);
+
+                            // Sign in to database securely
+                            if (initialAuthToken) {
+                                await signInWithCustomToken(auth, initialAuthToken);
+                            } else {
+                                await signInAnonymously(auth);
+                            }
+
+                            onAuthStateChanged(auth, (user) => {
+                                if (user) {
+                                    const userId = user.uid;
+                                    const q = query(collection(db, 'artifacts', appId, 'users', userId, 'vehicles'));
+                                    
+                                    onSnapshot(q, (snapshot) => {
+                                        const cars = [];
+                                        snapshot.forEach(doc => {
+                                            cars.push({ id: doc.id, ...doc.data() });
+                                        });
+                                        setGarage(cars);
+                                        setIsInitialized(true);
+                                    }, (err) => {
+                                        console.error("Cloud snapshot fail:", err);
+                                        loadLocalData();
+                                    });
+                                } else {
+                                    loadLocalData();
+                                }
+                            });
+                        } catch (e) {
+                            console.error("Cloud synchronization failing, using fallback:", e);
+                            loadLocalData();
+                        }
+                    } else {
+                        loadLocalData();
+                    }
+                };
+
+                const loadLocalData = () => {
+                    let loadedGarage = null;
+                    try {
+                        const cleared = localStorage.getItem('gv_cleared');
+                        if (cleared === 'true') {
+                            loadedGarage = [];
+                        } else {
+                            const primarySaved = localStorage.getItem(PRIMARY_STORAGE_KEY);
+                            if (primarySaved) {
+                                loadedGarage = JSON.parse(primarySaved);
+                            } else {
+                                for (const key of FALLBACK_KEYS) {
+                                    const saved = localStorage.getItem(key);
+                                    if (saved) {
+                                        const parsed = JSON.parse(saved);
+                                        if (Array.isArray(parsed) && parsed.length > 0) {
+                                            loadedGarage = parsed.map(car => {
+                                                let brand = car.brand || "";
+                                                let modelName = car.modelName || "";
+                                                if (!brand && !modelName && car.makeModel) {
+                                                    const words = car.makeModel.split(' ');
+                                                    brand = words[0] || "Concept";
+                                                    modelName = words.slice(1).join(' ') || "Machine";
+                                                }
+                                                return { ...car, brand, modelName };
+                                            });
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.warn("Storage quota read error:", e);
+                    }
+
+                    if (loadedGarage !== null) {
+                        setGarage(loadedGarage);
+                    } else {
+                        // Base template items
+                        const defaults = [
+                            {
+                                id: 1,
+                                year: "2024",
+                                brand: "Lotus",
+                                modelName: "Emira",
+                                trim: "First Edition",
+                                color: "Sapphire",
+                                cost: 95000,
+                                miles: 1420,
+                                horsepower: 400,
+                                favorite: true,
+                                topSpeed: 180,
+                                level: "L1",
+                                tags: ["Off-Sale"],
+                                images: []
+                            }
+                        ];
+                        setGarage(defaults.map(car => ({
+                            ...car,
+                            loreMap: {
+                                ENGINE: generateFailsafeLore(car, "ENGINE"),
+                                AERODYNAMICS: generateFailsafeLore(car, "AERODYNAMICS"),
+                                DESIGN: generateFailsafeLore(car, "DESIGN"),
+                                PERFORMANCE: generateFailsafeLore(car, "PERFORMANCE"),
+                                LEGACY: generateFailsafeLore(car, "LEGACY")
+                            }
+                        })));
+                    }
+                    setIsInitialized(true);
+                };
+
+                initSync();
+            }, []);
+
+            useEffect(() => {
+                if (!isInitialized) return;
+
+                const saveToStorage = async () => {
+                    const appId = typeof __app_id !== 'undefined' ? __app_id : 'okgarage-mini-app';
+                    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+                    
+                    if (firebaseConfig && window.FirebaseCore && cloudSavingActive) {
+                        const { getFirestore, doc, setDoc, getAuth } = window.FirebaseCore;
+                        try {
+                            const db = getFirestore();
+                            const auth = getAuth();
+                            const userId = auth.currentUser?.uid;
+                            if (userId) {
+                                // Write to cloud
+                                for (const car of garage) {
+                                    await setDoc(doc(db, 'artifacts', appId, 'users', userId, 'vehicles', String(car.id)), car);
+                                }
+                            }
+                        } catch (err) {
+                            console.error("Cloud synchronization update failure:", err);
+                        }
+                    }
+
+                    try {
+                        if (garage.length === 0) {
+                            localStorage.setItem('gv_cleared', 'true');
+                            localStorage.setItem(PRIMARY_STORAGE_KEY, '[]');
+                        } else {
+                            localStorage.removeItem('gv_cleared');
+                            localStorage.setItem(PRIMARY_STORAGE_KEY, JSON.stringify(garage));
+                        }
+                    } catch (error) {
+                        console.error("Quota exceeded saving locally:", error);
+                        showNotification("Internal Storage limits exceeded. Clean up some photos!");
+                    }
+                };
+
+                saveToStorage();
+            }, [garage, isInitialized, cloudSavingActive]);
+
+            // Save palette options
+            useEffect(() => {
+                try {
+                    localStorage.setItem('okgarage_color_palette', JSON.stringify(palette));
+                } catch (e) {}
+            }, [palette]);
+
+            useEffect(() => {
+                try {
+                    localStorage.setItem('gemini_api_key', geminiKey);
+                } catch (e) {}
+            }, [geminiKey]);
+
+            // Track slider locations
             useEffect(() => {
                 const activeBtn = sortRefs.current[garageSortBy];
                 if (activeBtn) {
@@ -684,12 +804,9 @@
 
                 const fullName = `${car.year || ''} ${brandStr} ${modelStr} ${trimStr}`.toLowerCase().trim();
 
-                if (fullName.includes("plaid")) {
-                    return "L2";
-                }
-                if (fullName.includes("heen") || fullName.includes("dogg")) {
-                    return "L2";
-                }
+                // Dynamic wildcard matching
+                if (fullName.includes("plaid")) return "L2";
+                if (fullName.includes("heen") || fullName.includes("dogg")) return "L2";
 
                 const isLimitedOrEvent = tags.some(tag => {
                     const clean = tag.toLowerCase();
@@ -701,13 +818,8 @@
                     return fullName.includes(bName) || bName.includes(fullName);
                 });
 
-                if (match) {
-                    return match.level;
-                }
-                
-                if (isLimitedOrEvent) {
-                    return "L2";
-                }
+                if (match) return match.level;
+                if (isLimitedOrEvent) return "L2";
 
                 if (car.level && car.level !== '0' && car.level !== 'Level 0' && car.level !== 'Standard') {
                     return car.level;
@@ -731,7 +843,6 @@
                 const input = (colorInput || "").toLowerCase().trim();
                 let r = 30, g = 35, b = 45; 
 
-                // Search the dynamic local color palette
                 const matchedInPalette = palette.find(p => p.name.toLowerCase() === input || p.hex.toLowerCase() === input);
                 let targetColor = input;
                 if (matchedInPalette) {
@@ -864,8 +975,16 @@
                 }, 50);
             };
 
-            const handleSaveCar = (e) => {
+            const handleSaveCar = async (e) => {
                 e.preventDefault();
+                showNotification("Saving with real-time compression...");
+                
+                // Compress core images to save storage space
+                let compressedCover = currentCar.image || "";
+                if (compressedCover && compressedCover.startsWith("data:image")) {
+                    compressedCover = await compressBase64(compressedCover);
+                }
+
                 const finalCar = {
                     ...currentCar,
                     id: currentCar.id || Date.now(),
@@ -874,16 +993,35 @@
                     horsepower: Number(currentCar.horsepower) || 300,
                     topSpeed: Number(currentCar.topSpeed) || 0,
                     level: currentCar.level || 'Level 0',
+                    image: compressedCover,
                     tags: currentCar.tags || [],
                     images: currentCar.images || [],
                     loreMap: currentCar.loreMap || {
                         ENGINE: generateFailsafeLore(currentCar, "ENGINE"),
-                        AERODYNAMICS: generateFailsafeLore(car => car, "AERODYNAMICS"),
-                        DESIGN: generateFailsafeLore(car => car, "DESIGN"),
-                        PERFORMANCE: generateFailsafeLore(car => car, "PERFORMANCE"),
-                        LEGACY: generateFailsafeLore(car => car, "LEGACY")
+                        AERODYNAMICS: generateFailsafeLore(currentCar, "AERODYNAMICS"),
+                        DESIGN: generateFailsafeLore(currentCar, "DESIGN"),
+                        PERFORMANCE: generateFailsafeLore(currentCar, "PERFORMANCE"),
+                        LEGACY: generateFailsafeLore(currentCar, "LEGACY")
                     }
                 };
+
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'okgarage-mini-app';
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+                
+                if (firebaseConfig && window.FirebaseCore && cloudSavingActive) {
+                    const { getFirestore, doc, deleteDoc } = window.FirebaseCore;
+                    try {
+                        const db = getFirestore();
+                        const auth = window.FirebaseCore.getAuth();
+                        const userId = auth.currentUser?.uid;
+                        if (userId && currentCar.id) {
+                            // If replacing an existing item ID
+                            await deleteDoc(doc(db, 'artifacts', appId, 'users', userId, 'vehicles', String(currentCar.id)));
+                        }
+                    } catch (err) {
+                        console.error("Cloud document sync failed on save:", err);
+                    }
+                }
 
                 if (currentCar.id && garage.some(c => c.id === currentCar.id)) {
                     setGarage(prev => prev.map(c => c.id === currentCar.id ? finalCar : c));
@@ -895,7 +1033,24 @@
                 handleCloseAddEdit();
             };
 
-            const handleDeleteCar = (id) => {
+            const handleDeleteCar = async (id) => {
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'okgarage-mini-app';
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+                
+                if (firebaseConfig && window.FirebaseCore && cloudSavingActive) {
+                    const { getFirestore, doc, deleteDoc } = window.FirebaseCore;
+                    try {
+                        const db = getFirestore();
+                        const auth = window.FirebaseCore.getAuth();
+                        const userId = auth.currentUser?.uid;
+                        if (userId) {
+                            await deleteDoc(doc(db, 'artifacts', appId, 'users', userId, 'vehicles', String(id)));
+                        }
+                    } catch (err) {
+                        console.error("Cloud sync document removal failed:", err);
+                    }
+                }
+
                 setGarage(garage.filter(c => c.id !== id));
                 showNotification("Fleet vehicle deleted.");
             };
@@ -918,6 +1073,7 @@
                 });
             };
 
+            // Filters logic for lists
             const filteredBve = useMemo(() => {
                 return BANNED_DATABASE.filter(car => {
                     const matchesSearch = car.name.toLowerCase().includes(bveSearch.toLowerCase());
@@ -978,11 +1134,30 @@
                 });
             }, [garage, garageSearch, garageSortBy, sortDirection, showOnlyFavorites, colorFilter, levelFilter]);
 
-            const handleDeleteAll = () => {
+            const handleDeleteAll = async () => {
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'okgarage-mini-app';
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+                
+                if (firebaseConfig && window.FirebaseCore && cloudSavingActive) {
+                    const { getFirestore, doc, deleteDoc } = window.FirebaseCore;
+                    try {
+                        const db = getFirestore();
+                        const auth = window.FirebaseCore.getAuth();
+                        const userId = auth.currentUser?.uid;
+                        if (userId) {
+                            for (const car of garage) {
+                                await deleteDoc(doc(db, 'artifacts', appId, 'users', userId, 'vehicles', String(car.id)));
+                            }
+                        }
+                    } catch (err) {
+                        console.error("Cloud database bulk clear failure:", err);
+                    }
+                }
+
                 setGarage([]);
                 try {
                     localStorage.setItem('gv_cleared', 'true');
-                    STORAGE_KEYS.forEach(key => localStorage.setItem(key, '[]'));
+                    localStorage.setItem(PRIMARY_STORAGE_KEY, '[]');
                 } catch (e) {}
                 showNotification("Garage cleared.");
             };
@@ -1057,16 +1232,53 @@
                 }
             };
 
-            const handleImportLocalFile = (e) => {
+            const handleImportLocalFile = async (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
 
                 const reader = new FileReader();
-                reader.onload = (event) => {
+                reader.onload = async (event) => {
                     try {
                         const parsed = JSON.parse(event.target.result);
                         if (Array.isArray(parsed)) {
-                            setGarage(parsed);
+                            showNotification("Converting schemas and compressing images...");
+                            
+                            // Safe decompression parsing
+                            const sanitized = await Promise.all(parsed.map(async (car, idx) => {
+                                let brand = car.brand || "";
+                                let modelName = car.modelName || "";
+                                if (!brand && !modelName && car.makeModel) {
+                                    const words = car.makeModel.split(' ');
+                                    brand = words[0] || "Concept";
+                                    modelName = words.slice(1).join(' ') || "Machine";
+                                }
+
+                                let compressedImg = car.image || "";
+                                if (compressedImg && compressedImg.startsWith("data:image")) {
+                                    compressedImg = await compressBase64(compressedImg);
+                                }
+
+                                let compressedImages = [];
+                                if (car.images && car.images.length > 0) {
+                                    compressedImages = await Promise.all(car.images.map(async (img) => {
+                                        if (img && img.startsWith("data:image")) {
+                                            return await compressBase64(img);
+                                        }
+                                        return img;
+                                    }));
+                                }
+
+                                return {
+                                    ...car,
+                                    brand,
+                                    modelName,
+                                    image: compressedImg,
+                                    images: compressedImages,
+                                    id: car.id || (Date.now() + idx)
+                                };
+                            }));
+
+                            setGarage(sanitized);
                             showNotification("Local backup restored successfully.");
                         } else {
                             showNotification("Invalid file format.");
@@ -1078,39 +1290,41 @@
                 reader.readAsText(file);
             };
 
-            const handleBulkImageUpload = (e) => {
+            const handleBulkImageUpload = async (e) => {
                 const files = Array.from(e.target.files);
                 if (!files.length) return;
 
-                let loadedCount = 0;
+                showNotification("Compressing uploaded photos...");
                 const newImages = [];
 
-                files.forEach((file) => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => {
-                        newImages.push(reader.result);
-                        loadedCount++;
-                        if (loadedCount === files.length) {
-                            const updatedGarage = garage.map(c => {
-                                if (c.id === selectedGalleryCar.id) {
-                                    const prevImages = c.images || [];
-                                    const combined = [...prevImages, ...newImages];
-                                    const updatedCar = { 
-                                        ...c, 
-                                        images: combined,
-                                        image: c.image || newImages[0] 
-                                    };
-                                    setSelectedGalleryCar(updatedCar);
-                                    return updatedCar;
-                                }
-                                return c;
-                            });
-                            setGarage(updatedGarage);
-                            showNotification(`Imported ${newImages.length} images.`);
-                        }
-                    };
-                    reader.readAsDataURL(file);
+                for (const file of files) {
+                    await new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onloadend = async () => {
+                            const compressed = await compressBase64(reader.result, 1024, 768);
+                            newImages.push(compressed);
+                            resolve();
+                        };
+                        reader.readAsDataURL(file);
+                    });
+                }
+
+                const updatedGarage = garage.map(c => {
+                    if (c.id === selectedGalleryCar.id) {
+                        const prevImages = c.images || [];
+                        const combined = [...prevImages, ...newImages];
+                        const updatedCar = { 
+                            ...c, 
+                            images: combined,
+                            image: c.image || newImages[0] 
+                        };
+                        setSelectedGalleryCar(updatedCar);
+                        return updatedCar;
+                    }
+                    return c;
                 });
+                setGarage(updatedGarage);
+                showNotification(`Imported and optimized ${newImages.length} images.`);
             };
 
             const handleSelectActiveCover = (imgBase64) => {
@@ -1150,8 +1364,9 @@
                 if (!file) return;
 
                 const reader = new FileReader();
-                reader.onload = (event) => {
-                    setSampledPicData(event.target.result);
+                reader.onload = async (event) => {
+                    const compressed = await compressBase64(event.target.result, 800, 600);
+                    setSampledPicData(compressed);
                     
                     const img = new Image();
                     img.onload = () => {
@@ -1163,10 +1378,10 @@
                             ctx.drawImage(img, 0, 0);
                         }
                     };
-                    img.src = event.target.result;
+                    img.src = compressed;
                     
-                    setCurrentCar(prev => ({ ...prev, image: event.target.result }));
-                    showNotification("Card cover uploaded! Click on it to sample hex colors.");
+                    setCurrentCar(prev => ({ ...prev, image: compressed }));
+                    showNotification("Optimized front cover uploaded! Tap cover to extract paints.");
                 };
                 reader.readAsDataURL(file);
             };
@@ -1243,6 +1458,7 @@
                 return `${pad(min)}:${pad(sec)}.${pad(mils)}`;
             };
 
+            // Adaptive layout selectors
             const garageGridClass = useMemo(() => {
                 if (splitOffset < 15) return 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5';
                 if (splitOffset < 40) return 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4';
@@ -1255,7 +1471,6 @@
                 return { gridTemplateColumns: `${leftColWidth} 10px ${rightColWidth}` };
             }, [splitOffset]);
 
-            // High-fidelity precomputations
             const gallerySpec = selectedGalleryCar ? getDynamicGradient(selectedGalleryCar.color) : null;
             const galleryLevel = selectedGalleryCar ? getCarLevel(selectedGalleryCar) : null;
             const galleryBadgeStyles = selectedGalleryCar ? getLevelBadgeStyles(galleryLevel) : null;
@@ -1264,7 +1479,6 @@
             return (
                 <div className="w-full h-screen bg-[#07080b] text-white flex flex-col relative select-none overflow-hidden">
                     
-                    {/* Dynamic Toast Alerts */}
                     {toast.visible && (
                         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[150] flex items-center gap-3 px-6 py-3 rounded-full bg-[#181a20]/95 border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.85)] transition-all">
                             <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -1272,23 +1486,8 @@
                         </div>
                     )}
 
-                    {/* Split View Snapshot Indicators */}
-                    <div className="fixed top-4 right-10 z-[80] flex items-center gap-3">
-                        {splitOffset < 15 && (
-                            <button onClick={() => setSplitOffset(50)} className="px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 rounded-full text-xs font-bold transition-all text-emerald-400 animate-pulse">
-                                Show BVE Registry
-                            </button>
-                        )}
-                        {splitOffset > 85 && (
-                            <button onClick={() => setSplitOffset(50)} className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-full text-xs font-bold transition-all text-red-400 animate-pulse">
-                                Show Garage Fleet
-                            </button>
-                        )}
-                    </div>
-
-                    {/* Navigation bar */}
                     <header className="w-full max-w-[1720px] mx-auto px-10 pt-8 pb-4 flex justify-between items-center z-10">
-                        <div>
+                        <div className="flex items-center gap-3">
                             <h1 className="text-xl font-extrabold tracking-tight font-['Montserrat'] bg-gradient-to-r from-white via-white/80 to-white/60 bg-clip-text text-transparent">okGARAGE - mini</h1>
                         </div>
                         <div className="flex gap-3">
@@ -1308,13 +1507,13 @@
                         </div>
                     </header>
 
-                    {/* Split window frame */}
+                    {/* Symmetrical split layout workspace */}
                     <div 
                         className="flex-1 w-full max-w-[1720px] mx-auto px-10 pb-10 grid relative select-none min-h-0 animate-fade-in"
                         style={gridStyle}
                     >
                         
-                        {/* LEFT SEGMENT: Banned Vehicle Entry Registry */}
+                        {/* LEFT GRID PANEL: BVE LIST VIEW */}
                         {splitOffset >= 5 && (
                             <div style={{ gridColumn: '1' }} className="flex flex-col h-full overflow-hidden pr-3">
                                 <div className="mb-4 flex flex-wrap justify-between items-end gap-3">
@@ -1325,7 +1524,7 @@
                                     <div className="flex items-center gap-2 flex-wrap">
                                         <div className="bg-[#ffffff]/[0.05] rounded-xl p-1 border border-white/[0.06] flex items-center gap-1 h-9 text-xs overflow-x-auto scrollbar-none shrink-0 relative">
                                             
-                                            {/* Absolute layout sliding visual capsule */}
+                                            {/* Sliding capsule backdrop for BVE tab headers */}
                                             <div 
                                                 className="absolute bg-white/10 rounded-[8px] h-[28px] transition-all duration-300 ease-out z-0"
                                                 style={{
@@ -1384,7 +1583,6 @@
                                                         className="group relative rounded-2xl p-5 border transition-all card-transition h-[340px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer staggered-card"
                                                         onClick={() => handleOpenGallery(ownedCar)}
                                                     >
-                                                        {/* Floating gravity particles inside card element background layouts */}
                                                         <AmbientSpheres colorRGB={spec.rawRGB} count={5} />
 
                                                         <div className="relative z-10 pr-1">
@@ -1412,7 +1610,7 @@
                                                             </div>
                                                         </div>
 
-                                                        {/* Center side silhouette profile */}
+                                                        {/* Transparent container drawing to fix image_83f046.jpg black background issue */}
                                                         <div className="absolute top-[85px] left-1/2 -translate-x-1/2 pointer-events-none z-0 w-[82%] flex items-center justify-center bg-transparent h-[140px]">
                                                             {ownedCar.image ? (
                                                                 <img src={ownedCar.image} alt="active cover" className="max-w-full max-h-full object-contain bg-transparent block mx-auto" />
@@ -1499,7 +1697,7 @@
                             </div>
                         )}
 
-                        {/* Splitting dragging element */}
+                        {/* SPLIT SCREEN DRAGGABLE ANCHOR BAR */}
                         <div 
                             onMouseDown={handleMouseDown}
                             style={{ gridColumn: '2' }}
@@ -1511,7 +1709,7 @@
                             </div>
                         </div>
 
-                        {/* RIGHT SEGMENT: My Garage Collection */}
+                        {/* RIGHT GRID PANEL: USER OWNED GARAGE FLEET */}
                         {splitOffset <= 95 && (
                             <div style={{ gridColumn: '3' }} className="flex flex-col h-full overflow-hidden pl-3">
                                 
@@ -1523,9 +1721,10 @@
 
                                     <div className="flex items-center gap-2 flex-wrap">
                                         
-                                        {/* Dynamic Sliding segmented back capsule element */}
+                                        {/* Dynamic sliding anchor capsule for main sort properties */}
                                         <div className="bg-[#ffffff]/[0.05] rounded-xl p-1 border border-white/[0.06] flex items-center h-9 text-xs flex-wrap relative">
                                             
+                                            {/* White sliding backdrop */}
                                             <div 
                                                 className="absolute bg-white/10 rounded-[8px] h-[28px] transition-all duration-300 ease-out z-0"
                                                 style={{
@@ -1554,7 +1753,7 @@
                                             ★
                                         </button>
 
-                                        {/* Dropdown filters */}
+                                        {/* Dropdowns with animations */}
                                         <div className="relative">
                                             <button 
                                                 onClick={() => { setIsLevelDropdownOpen(!isLevelDropdownOpen); setIsColorDropdownOpen(false); }}
@@ -1628,6 +1827,7 @@
                                     />
                                 </div>
 
+                                {/* Staggered cascading entry on grid cards sorting */}
                                 <div className="flex-1 overflow-y-auto pl-1 pr-1 pb-4 space-y-4 smooth-scroll">
                                     <div className={`grid gap-4 ${garageGridClass}`}>
                                         {sortedGarage.map((car, gridIndex) => {
@@ -1648,7 +1848,6 @@
                                                     style={{ background: spec.gradient, borderColor: spec.border, animationDelay: `${gridIndex * 25}ms` }}
                                                     className="group relative rounded-2xl p-5 border transition-all card-transition h-[340px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer staggered-card"
                                                 >
-                                                    {/* Floating background particle bubbles */}
                                                     <AmbientSpheres colorRGB={spec.rawRGB} count={6} />
 
                                                     <div className="relative z-10 pr-1">
@@ -1676,7 +1875,7 @@
                                                         </div>
                                                     </div>
 
-                                                    {/* Center outline graphic side profile */}
+                                                    {/* Transparent background completely removes black/dark grey rectangle tints to fix image_83f046.jpg */}
                                                     <div className="absolute top-[85px] left-1/2 -translate-x-1/2 pointer-events-none z-0 w-[82%] flex items-center justify-center bg-transparent h-[140px]">
                                                         {car.image ? (
                                                             <img src={car.image} alt="active cover" className="max-w-full max-h-full object-contain bg-transparent block mx-auto" />
@@ -1744,7 +1943,7 @@
 
                     </div>
 
-                    {/* Popover right-click overlay */}
+                    {/* Right-click popup menu context */}
                     {contextMenu.visible && (
                         <div 
                             style={{ top: contextMenu.y, left: contextMenu.x }}
@@ -1780,11 +1979,10 @@
                         </div>
                     )}
 
-                    {/* Immersive detailed album catalog view */}
+                    {/* IMMERSIVE FULL-SCREEN OVERLAY PORTFOLIO (GALLERY VIEW) */}
                     {galleryModalState.isRendered && selectedGalleryCar && (
                         <div className={`fixed inset-0 z-[120] flex flex-col bg-[#07080b]/95 backdrop-blur-2xl overflow-y-auto transition-all duration-[400ms] ${galleryModalState.isVisible ? 'opacity-100' : 'opacity-0'}`}>
                             
-                            {/* Detailed menu background gravity drift bubbles */}
                             <div className="absolute inset-0 pointer-events-none overflow-hidden z-0 h-full w-full">
                                 <AmbientSpheres colorRGB={gallerySpec.rawRGB} count={16} />
                             </div>
@@ -1797,6 +1995,7 @@
                                     >
                                         {galleryLevel === 'Level 0' ? '0' : galleryLevel}
                                     </span>
+                                    {/* Symmetrical Header Typography mapping year and model font sizing identically */}
                                     <h3 className="text-2xl font-black font-['Montserrat'] tracking-tight text-white leading-none">
                                         {selectedGalleryCar.year} {selectedGalleryCar.brand} {selectedGalleryCar.modelName}
                                     </h3>
@@ -1816,7 +2015,6 @@
                                         <h4 className="text-xs font-black uppercase tracking-wider text-emerald-400 font-sans">Track & Performance Specs</h4>
                                         <div className="grid grid-cols-1 gap-3 flex-1 justify-center">
                                             
-                                            {/* Track metrics pill card */}
                                             <div className="bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl flex flex-col gap-2">
                                                 <div className="flex justify-between items-center">
                                                     <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider font-sans">Racetrack Stopwatch</span>
@@ -1880,13 +2078,12 @@
                                         </div>
                                     </div>
 
-                                    {/* Center preview card wrapper */}
+                                    {/* Primary Centered Vignette card */}
                                     <div className="w-full lg:w-[60%] flex flex-col justify-center items-center">
                                         <div 
                                             style={{ background: gallerySpec.gradient, borderColor: gallerySpec.border }}
                                             className="w-full max-w-[480px] rounded-3xl p-6 border transition-all card-transition relative shadow-2xl h-full min-h-[380px] flex flex-col justify-between"
                                         >
-                                            {/* Back active levitating particle spheres inside center graphic frame */}
                                             <AmbientSpheres colorRGB={gallerySpec.rawRGB} count={6} />
 
                                             <div className="relative z-10">
@@ -1912,6 +2109,7 @@
                                                 </div>
                                             </div>
 
+                                            {/* Fully transparent card wrapper with no dark backing card boxes to solve image_83f046.jpg issues */}
                                             <div className="flex-1 w-full flex items-center justify-center relative min-h-[210px] z-10">
                                                 {selectedGalleryCar.image ? (
                                                     <img src={selectedGalleryCar.image} alt="active cover" className="max-w-[85%] max-h-[195px] object-contain bg-transparent block mx-auto" />
@@ -1952,7 +2150,7 @@
                                     </div>
                                 </div>
 
-                                {/* Album container */}
+                                {/* Custom Unboxed photo album with aligned glowing edge */}
                                 <div className="w-full flex flex-col transition-all mt-12">
                                     <div className="flex justify-between items-center pb-4 border-b border-white/[0.05] relative z-10">
                                         <div>
@@ -1977,7 +2175,7 @@
                                         </div>
                                     </div>
 
-                                    {/* Album content block - overlapping marginTop flush with bottom-border line to resolve layout gap */}
+                                    {/* Strictly aligned dynamic radial color fade container starting exactly flush under the divider */}
                                     <div 
                                         style={{ 
                                             background: `radial-gradient(ellipse at top, rgba(${gallerySpec.rawRGB}, 0.24) 0%, rgba(${gallerySpec.rawRGB}, 0.05) 40%, rgba(7, 8, 11, 0) 75%)`,
@@ -2004,14 +2202,12 @@
                                                             >
                                                                 <AmbientSpheres colorRGB={gallerySpec.rawRGB} count={4} />
 
-                                                                {/* Photo Preview Card */}
                                                                 <div 
                                                                     onClick={() => handleSelectActiveCover(img)}
                                                                     className={`relative w-full md:w-[60%] aspect-[16/10] rounded-3xl overflow-hidden border bg-transparent cursor-pointer group/item transition-all z-10 ${isActive ? 'border-emerald-500 ring-4 ring-emerald-500/20 scale-[1.01]' : 'border-white/10 hover:border-white/30'}`}
                                                                 >
                                                                     <img src={img} alt={`album-${idx}`} className="w-full h-full object-cover bg-transparent" />
                                                                     
-                                                                    {/* Delete button */}
                                                                     <button 
                                                                         onClick={(e) => {
                                                                             e.stopPropagation();
@@ -2030,7 +2226,6 @@
                                                                     </div>
                                                                 </div>
 
-                                                                {/* Technical Editorial Segment */}
                                                                 <div className="w-full md:w-[40%] flex flex-col justify-start items-start py-2 z-10">
                                                                     <div className="flex items-center justify-between w-full mb-3 border-b border-white/[0.05] pb-2">
                                                                         <div className="flex items-center gap-3">
@@ -2041,7 +2236,7 @@
                                                                                 <button 
                                                                                     onClick={() => fetchGeminiLore(selectedGalleryCar, subTitle)}
                                                                                     className="px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-[9px] font-black border border-emerald-500/20 transition-all uppercase tracking-widest flex items-center gap-1 font-sans"
-                                                                              >
+                                                                                >
                                                                                     ✨ Ask Gemini
                                                                                 </button>
                                                                             )}
@@ -2079,7 +2274,7 @@
                         </div>
                     )}
 
-                    {/* Fleet Creation form layout modal with fluid scale animation */}
+                    {/* CREATE OR EDIT FLEET MODAL POPUP */}
                     {addEditModalState.isRendered && currentCar && (
                         <div className={`fixed inset-0 z-[100] flex items-center justify-center p-4 transition-all duration-[300ms] ${addEditModalState.isVisible ? 'opacity-100' : 'opacity-0'}`}>
                             <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={handleCloseAddEdit}></div>
@@ -2143,7 +2338,7 @@
                                             </div>
                                         </div>
 
-                                        {/* Color extraction helper */}
+                                        {/* Picture canvas sampling interface */}
                                         <div className="flex flex-col gap-1.5 mt-2 bg-white/[0.01] border border-white/5 p-3 rounded-2xl">
                                             <div className="flex justify-between items-center">
                                                 <span className="text-[9px] text-emerald-400 font-black uppercase tracking-widest font-sans">Sample Color From Front Pic</span>
@@ -2166,7 +2361,6 @@
                                             )}
                                         </div>
 
-                                        {/* Color swatch creation controls */}
                                         <div className="flex flex-col gap-1">
                                             <input 
                                                 type="text" 
@@ -2203,7 +2397,6 @@
                                         </div>
                                     </div>
 
-                                    {/* Toggle tag filters */}
                                     <div className="flex flex-col gap-2">
                                         <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans">Toggle Greenville Tags</label>
                                         <div className="grid grid-cols-4 gap-2">
@@ -2237,7 +2430,6 @@
                                         </div>
                                     </div>
 
-                                    {/* Specifications */}
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="flex flex-col gap-1">
                                             <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans">Brand (Make)</label>
@@ -2282,7 +2474,6 @@
                         </div>
                     )}
 
-                    {/* Gemini settings control bar */}
                     {!galleryModalState.isRendered && !addEditModalState.isRendered && (
                         <div id="sync-settings" className="fixed bottom-6 left-6 z-[130]">
                             <button 
