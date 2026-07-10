@@ -109,7 +109,7 @@
         const { useState, useEffect, useMemo, useRef } = React;
 
         // Fully completed BVE database matching all supplied registry files
-        const BANNED_DATABASE = [
+        const BANNED_DATABASE_SGR = [
             // Level 1 BVE Database
             { name: "1974 Lancia Stratos HF Stradale", level: "L1" },
             { name: "1981 Bayro W10", level: "L1" },
@@ -336,6 +336,162 @@
             { name: "Speed Readout Trailer", level: "Permbanned" },
             { name: "10' x 6' Concrete Mixer", level: "Permbanned" }
         ];
+
+        // GVRPV server BVE database
+        const BANNED_DATABASE_GVRPV = [
+            // Tier 1: Basic
+            { name: "1981 Ferdinand Rapido", level: "L1" },
+            { name: "1990 Ferdinand Tourer", level: "L1" },
+            { name: "1995 Ferdinand Tourer", level: "L1" },
+            { name: "2004 Ferdinand Roadster", level: "L1" },
+            { name: "2007 Marlin Motors Velindre", level: "L1" },
+            { name: "2008 Bullhorn Python", level: "L1" },
+            { name: "2009 Navara Horizon", level: "L1" },
+            { name: "2010 Marlin Motors GT", level: "L1" },
+            { name: "2010 Marlin Motors GTS", level: "L1" },
+            { name: "2010 BKM W50", level: "L1" },
+            { name: "2012 BKM W10", level: "L1" },
+            { name: "2012 Celestial Type-5", level: "L1" },
+            { name: "2013 BullHorn Determinator", level: "L1" },
+            { name: "2013 Jaguar XK", level: "L1" },
+            { name: "2015 Stuttgart Vance 63", level: "L1" },
+            { name: "2017 Falcon Stallion", level: "L1" },
+            { name: "2017 Ferdinand Rapido", level: "L1" },
+            { name: "2017 Stuttgart Koblenz 63", level: "L1" },
+            { name: "2018 Stuttgart Essen 63", level: "L1" },
+            { name: "2018 Stuttgart Essen 63 Coupe", level: "L1" },
+            { name: "2018 Land Rover Range Rover", level: "L1" },
+            { name: "2019 Durant Manta", level: "L1" },
+            { name: "2019 Land Rover Range Rover Sport", level: "L1" },
+            { name: "2020 Marlin Motors Vivacite", level: "L1" },
+            { name: "2021 Marlin Motors London", level: "L1" },
+            { name: "2021 Stuttgart Landschaft", level: "L1" },
+            { name: "2021 Stuttgart Wilhelm Sondergeland", level: "L1" },
+            { name: "2022 Colin Commander", level: "L1" },
+            { name: "2022 Alfa Romeo Giulia", level: "L1" },
+            { name: "2022 Mauntley Windsor EWB", level: "L1" },
+
+            // Tier 2: Deluxe
+            { name: "2002 Navara Horizon GT-R Series-", level: "L2" },
+            { name: "2003 Lotus Espirit", level: "L2" },
+            { name: "2008 Navara Star", level: "L2" },
+            { name: "2009 Alfa Romeo 8C Competizione", level: "L2" },
+            { name: "2010 Marlin Motors Vivacite", level: "L2" },
+            { name: "2010 SirRodgers Zenith", level: "L2" },
+            { name: "2010 Stuttgart E-Saloon 063", level: "L2" },
+            { name: "2012 Marlin Motors Veloce", level: "L2" },
+            { name: "2014 Bellico SixtySix", level: "L2" },
+            { name: "2014 Stuttgart-Sport Falke", level: "L2" },
+            { name: "2014 Marlin Motors Vivacite S", level: "L2" },
+            { name: "2016 BKM Risen", level: "L2" },
+            { name: "2017 BuliHorn SFP Python", level: "L2" },
+            { name: "2017 Stuttgart Koblenz 63", level: "L2" },
+            { name: "2018 BullHom Buffalo SFP-10", level: "L2" },
+            { name: "2018 Stuttgart Essen 63", level: "L2" },
+            { name: "2019 Land Rover Range Rover Sport", level: "L2" },
+            { name: "2020 Land Rover Range Rover Velar", level: "L2" },
+            { name: "2020 Lotus Evora", level: "L2" },
+            { name: "2020 Overland Apache SFP", level: "L2" },
+            { name: "2020 Martin Motors Vivacito E", level: "L2" },
+            { name: "2021 BullHom Prancer (All widebody trims)", level: "L2" },
+            { name: "2021 Romapiha Zulie Quadluck", level: "L2" },
+            { name: "2021 Stuttgart Vierturig", level: "L2" },
+            { name: "2021 Stuttgart Sonderland 63", level: "L2" },
+            { name: "2021 Stuttgart Vaihingen 63 & Vainingen 63 Coupe", level: "L2" },
+            { name: "2021 Surrey Grand Tourer", level: "L2" },
+            { name: "2022 Mauntiey Windsor", level: "L2" },
+            { name: "2022 Ferdinand Rapido Coupe", level: "L2" },
+            { name: "2022 Ferdinand Rapido GT3", level: "L2" },
+            { name: "2022 Mauntley Soarer", level: "L2" },
+            { name: "2022 Mauntley National CT", level: "L2" },
+            { name: "2023 Ferdinand Snapper GT4", level: "L2" },
+            { name: "2023 Stuttgart Munster", level: "L2" },
+            { name: "2023 Stuttgart Wilhelm Munster", level: "L2" },
+            { name: "2023 Audi RS3", level: "L2" },
+            { name: "2023 Durant Amigo", level: "L2" },
+            { name: "2023 Takeo Experience", level: "L2" },
+            { name: "2024 BKM W70", level: "L2" },
+            { name: "2024 Falcon Stallion", level: "L2" },
+            { name: "2024 Chiara Vincenzo", level: "L2" },
+            { name: "2024 Lotus Emira", level: "L2" },
+            { name: "2024 Audi RS7", level: "L2" },
+            { name: "2025 Audi RS6", level: "L2" },
+            { name: "2025 Audi RSQB", level: "L2" },
+            { name: "2025 Stuttgart E-Saloon 053", level: "L2" },
+            { name: "2022 BKM W40", level: "L2" },
+            { name: "2023 BKM 640 (W50 Trim)", level: "L2" },
+            { name: "2017 Saleem 57 LM", level: "L2" },
+            { name: "2025 Vision Rainier PreRunner", level: "L2" },
+            { name: "2023 BKM W40 Z", level: "L2" },
+
+            // Tier 3: Premium
+            { name: "1962 Chiara Berlinetta GT", level: "L3" },
+            { name: "1964 Chryslur Jetstream", level: "L3" },
+            { name: "1981 BKM W10", level: "L3" },
+            { name: "1994 Jaguar XJ220", level: "L3" },
+            { name: "2005 Falcon Heritage", level: "L3" },
+            { name: "2005 Saleen S7", level: "L3" },
+            { name: "2007 Stuttgart GT Surrey", level: "L3" },
+            { name: "2011 Silhouette Gioiosa", level: "L3" },
+            { name: "2012 Surrey Renaissance", level: "L3" },
+            { name: "2016 Surrey LT-500", level: "L3" },
+            { name: "2016 Surrey S-350", level: "L3" },
+            { name: "2016 Alfa Romeo 4C", level: "L3" },
+            { name: "2017 Navara Horizon", level: "L3" },
+            { name: "2021 Marlin Motors Bristol", level: "L3" },
+            { name: "2021 Surrey Grand Tourer", level: "L3" },
+            { name: "2021 Audi R8 V10 Spyder", level: "L3" },
+            { name: "2021 Bullhorn Determinator", level: "L3" },
+            { name: "2021 Bovine Pueblo Fury", level: "L3" },
+            { name: "2022 Mauntley Cardiff", level: "L3" },
+            { name: "2022 Ferdinand Rapido Coupe", level: "L3" },
+            { name: "2022 SirRodgers Constellation", level: "L3" },
+            { name: "2023 Bullhorn Determinator", level: "L3" },
+            { name: "2023 Silhouette Rinoceronte", level: "L3" },
+            { name: "2023 Surrey Ripon", level: "L3" },
+            { name: "2023 Bovine Prancer Fury", level: "L3" },
+            { name: "2024 Chiara 006", level: "L3" },
+            { name: "2024 SirRodgers Appirration", level: "L3" },
+            { name: "2024 Silhouette Tifon", level: "L3" },
+
+            // Tier 4: Premium Plus
+            { name: "Limited/Collectable Vehicles not listed above or below", level: "L4" },
+            { name: "Event Vehicles", level: "L4" },
+            { name: "Excessively modified pickup trucks (Excessively raised or lowered)", level: "L4" },
+            { name: "Plaid/Surge trim Celestials", level: "L4" },
+            { name: "HEENS/DOGGS", level: "L4" },
+            { name: "Offsale Vehicles", level: "L4" },
+            { name: "Limousines", level: "L4" },
+            { name: "Lawnmowers (Host permission + All vehicle exempt required)", level: "L4" },
+            { name: "Golf carts (Host permission + All vehicle exempt required)", level: "L4" },
+            { name: "2006 Pagani Zonda", level: "L4" },
+            { name: "2007 Ferdinand Ultima", level: "L4" },
+            { name: "2008 Eezee Ziggy", level: "L4" },
+            { name: "2017 Pagani Huayra", level: "L4" },
+            { name: "2018 Skane Rusa", level: "L4" },
+            { name: "2020 Durant Voyager", level: "L4" },
+            { name: "2020 Surrey Speedlet", level: "L4" },
+            { name: "2022 Skane Rundtur", level: "L4" },
+            { name: "2023 NVNA Acesera", level: "L4" },
+            { name: "2023 NVNA Acesera Classic", level: "L4" },
+            { name: "2023 NVNA Sport Acesera", level: "L4" },
+            { name: "2023 Celestial Type-1", level: "L4" },
+            { name: "2023 Simple Atmos Sapphire", level: "L4" },
+            { name: "2015 Renault Sport R.S. 01", level: "L4" },
+            { name: "2023 Audi R8 V10 Coupe GT", level: "L4" },
+
+            // Host Permission Only
+            { name: "Trailers", level: "L4" },
+            { name: "RVs (You may not tow a trailer using this under any circumstances)", level: "L4" },
+            { name: "Lawnmowers (AVE + Host permission required)", level: "L4" },
+            { name: "Golf carts (AVE + Host permission required)", level: "L4" }
+        ];
+
+        // Per-server BVE registries -- switching servers swaps which list is active
+        const BANNED_DATABASES = {
+            SGR: BANNED_DATABASE_SGR,
+            GVRPV: BANNED_DATABASE_GVRPV
+        };
 
         const compressBase64 = (base64Str, maxWidth = 640, maxHeight = 480, quality = 0.85) => {
             return new Promise((resolve) => {
@@ -613,6 +769,13 @@
             // Filtering query boundaries
             const [bveSearch, setBveSearch] = useState('');
             const [bveLevelFilter, setBveLevelFilter] = useState('All');
+            const [activeServer, setActiveServer] = useState(() => {
+                try {
+                    return localStorage.getItem('gv_active_server') || 'SGR';
+                } catch (e) {
+                    return 'SGR';
+                }
+            });
             const [garageSearch, setGarageSearch] = useState('');
             const [garageSortBy, setGarageSortBy] = useState('Year');
             const [sortDirection, setSortDirection] = useState('desc');
@@ -649,6 +812,8 @@
             const [sortPillStyle, setSortPillStyle] = useState({ left: 0, width: 0 });
             const bveFilterRefs = useRef({});
             const [bveFilterPillStyle, setBveFilterPillStyle] = useState({ left: 0, width: 0 });
+            const serverFilterRefs = useRef({});
+            const [serverFilterPillStyle, setServerFilterPillStyle] = useState({ left: 0, width: 0 });
 
             useEffect(() => {
                 const initSync = async () => {
@@ -907,6 +1072,23 @@
                 }
             }, [bveLevelFilter]);
 
+            useEffect(() => {
+                const activeBtn = serverFilterRefs.current[activeServer];
+                if (activeBtn) {
+                    setServerFilterPillStyle({
+                        left: activeBtn.offsetLeft,
+                        width: activeBtn.offsetWidth
+                    });
+                }
+            }, [activeServer]);
+
+            // Remember which server's BVE list was selected across refreshes
+            useEffect(() => {
+                try {
+                    localStorage.setItem('gv_active_server', activeServer);
+                } catch (e) {}
+            }, [activeServer]);
+
             const showNotification = (msg) => {
                 setToast({ visible: true, message: msg });
                 setTimeout(() => {
@@ -971,7 +1153,7 @@
                     return clean === 'limited' || clean === 'event';
                 });
 
-                const match = BANNED_DATABASE.find(b => {
+                const match = BANNED_DATABASES[activeServer].find(b => {
                     const bName = b.name.toLowerCase().trim();
                     return fullName.includes(bName) || bName.includes(fullName);
                 });
@@ -1233,12 +1415,12 @@
 
             // Filters logic for lists
             const filteredBve = useMemo(() => {
-                return BANNED_DATABASE.filter(car => {
+                return BANNED_DATABASES[activeServer].filter(car => {
                     const matchesSearch = car.name.toLowerCase().includes(bveSearch.toLowerCase());
                     const matchesLevel = bveLevelFilter === 'All' || car.level.toLowerCase() === bveLevelFilter.toLowerCase();
                     return matchesSearch && matchesLevel;
                 });
-            }, [bveSearch, bveLevelFilter]);
+            }, [bveSearch, bveLevelFilter, activeServer]);
 
             const sortedGarage = useMemo(() => {
                 let result = garage.filter(car => {
@@ -1290,7 +1472,7 @@
 
                     return sortDirection === 'desc' ? (valA < valB ? 1 : -1) : (valA > valB ? 1 : -1);
                 });
-            }, [garage, garageSearch, garageSortBy, sortDirection, showOnlyFavorites, colorFilter, levelFilter]);
+            }, [garage, garageSearch, garageSortBy, sortDirection, showOnlyFavorites, colorFilter, levelFilter, activeServer]);
 
             const handleDeleteAll = async () => {
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'okgarage-mini-app';
@@ -1657,10 +1839,10 @@
                         </div>
                         <div className="flex gap-3">
                             <button onClick={handleDownloadLocalBackup} className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5" title="Download backup file directly to computer">
-                                📥 Export JSON Data
+                                Export JSON Data
                             </button>
                             <label className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5 cursor-pointer" title="Import database file from local path">
-                                📤 Import JSON File
+                                Import JSON File
                                 <input type="file" accept=".json" onChange={handleImportLocalFile} className="hidden" />
                             </label>
                             <button onClick={handleDeleteAll} className="h-10 px-5 rounded-full bg-red-900/20 hover:bg-red-900/40 border border-red-500/30 text-red-400 text-[13px] font-semibold transition-all">
@@ -1687,6 +1869,30 @@
                                         <p className="text-xs text-white/40 mt-1 font-medium font-sans">showing {filteredBve.length} listings</p>
                                     </div>
                                     <div className="flex items-center gap-2 flex-wrap">
+                                        <div className="bg-[#ffffff]/[0.05] rounded-xl p-1 border border-white/[0.06] flex items-center gap-1 h-9 text-xs overflow-x-auto scrollbar-none shrink-0 relative">
+
+                                            {/* Sliding capsule backdrop for server switcher */}
+                                            <div 
+                                                className="absolute bg-white/10 rounded-[8px] h-[28px] transition-all duration-300 ease-out z-0"
+                                                style={{
+                                                    left: `${serverFilterPillStyle.left}px`,
+                                                    width: `${serverFilterPillStyle.width}px`
+                                                }}
+                                            />
+
+                                            {['SGR', 'GVRPV'].map((srv) => (
+                                                <button 
+                                                    key={srv}
+                                                    ref={el => serverFilterRefs.current[srv] = el}
+                                                    type="button"
+                                                    onClick={() => setActiveServer(srv)}
+                                                    className={`px-3 py-1 rounded-[8px] font-medium transition-colors relative z-10 whitespace-nowrap ${activeServer === srv ? 'text-white' : 'text-white/50 hover:text-white/80'}`}
+                                                >
+                                                    {srv}
+                                                </button>
+                                            ))}
+                                        </div>
+
                                         <div className="bg-[#ffffff]/[0.05] rounded-xl p-1 border border-white/[0.06] flex items-center gap-1 h-9 text-xs overflow-x-auto scrollbar-none shrink-0 relative">
                                             
                                             {/* Sliding capsule backdrop for BVE tab headers */}
