@@ -628,6 +628,101 @@
             });
         };
 
+        // ---------------------------------------------------------------------
+        // "okgarage" watermark logo, used on downloaded card/photo exports.
+        //
+        // Loaded once via fetch()+blob rather than a plain <img crossOrigin>:
+        // once it's turned into a blob: URL it's same-origin as far as the
+        // canvas is concerned, so exporting the canvas afterward (toBlob/
+        // toDataURL) never throws a "tainted canvas" security error, regardless
+        // of GitHub's own CORS headers. Using the direct raw.githubusercontent.com
+        // URL (rather than the github.com "blob" page + ?raw=true redirect)
+        // since it's the one guaranteed to send proper CORS headers.
+        // ---------------------------------------------------------------------
+        const OK_LOGO_URL = 'https://raw.githubusercontent.com/okfait/okgarage-mini/main/ok%20(27).png';
+        let cachedLogoImgPromise = null;
+
+        const loadOkLogo = () => {
+            if (cachedLogoImgPromise) return cachedLogoImgPromise;
+            const attempt = (async () => {
+                const response = await fetch(OK_LOGO_URL, { mode: 'cors' });
+                if (!response.ok) throw new Error("Failed to fetch OK logo: " + response.status);
+                const blob = await response.blob();
+                const objectUrl = URL.createObjectURL(blob);
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.onload = () => resolve(img);
+                    img.onerror = () => reject(new Error("Failed to decode OK logo image"));
+                    img.src = objectUrl;
+                });
+            })();
+            // Don't cache a failed attempt -- let the next save retry the fetch
+            // instead of being stuck forever after one transient network blip.
+            attempt.catch(() => { cachedLogoImgPromise = null; });
+            cachedLogoImgPromise = attempt;
+            return cachedLogoImgPromise;
+        };
+
+        // Draws the OK logo bottom-right of a canvas: inset from the corner
+        // (never touching it), semi-transparent, with a soft white glow behind
+        // it so the black logo stands out against dark car photos/cards.
+        const drawOkWatermark = (ctx, canvasWidth, canvasHeight, logoImg) => {
+            const targetWidth = Math.round(canvasWidth * 0.16);
+            const targetHeight = Math.round(targetWidth * (logoImg.height / logoImg.width));
+            const margin = Math.round(canvasWidth * 0.035);
+            const x = canvasWidth - targetWidth - margin;
+            const y = canvasHeight - targetHeight - margin;
+
+            ctx.save();
+            ctx.globalAlpha = 0.55;
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.95)';
+            ctx.shadowBlur = Math.round(canvasWidth * 0.03);
+            ctx.drawImage(logoImg, x, y, targetWidth, targetHeight);
+            ctx.restore();
+        };
+
+        // Triggers a browser download for a canvas, saved as a PNG file.
+        const downloadCanvasAsPng = (canvas, filename) => {
+            canvas.toBlob((blob) => {
+                if (!blob) return;
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }, 'image/png');
+        };
+
+        // Loads any image source (data URL, blob URL, etc.) into an <img>,
+        // resolving once it's decoded and ready to draw onto a canvas.
+        const loadImageEl = (src) => {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = () => reject(new Error("Failed to load image"));
+                img.src = src;
+            });
+        };
+
+        // Rounded-rect path helper (drawn manually for broad browser support).
+        const traceRoundedRectPath = (ctx, x, y, width, height, radius) => {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.arcTo(x + width, y, x + width, y + height, radius);
+            ctx.arcTo(x + width, y + height, x, y + height, radius);
+            ctx.arcTo(x, y + height, x, y, radius);
+            ctx.arcTo(x, y, x + width, y, radius);
+            ctx.closePath();
+        };
+
+        const sanitizeFileNamePart = (str) => (str || "")
+            .toString()
+            .replace(/[^a-z0-9]+/gi, '_')
+            .replace(/^_+|_+$/g, '') || "car";
+
         const generateFailsafeLore = (car, sectionName) => {
             const brand = car.brand || "Concept";
             const model = car.modelName || "Machine";
@@ -788,6 +883,7 @@
 
             // Dynamic interaction tracking
             const [hoveredCardId, setHoveredCardId] = useState(null);
+            const [isVignetteHovered, setIsVignetteHovered] = useState(false);
             const [hoveredBveIndex, setHoveredBveIndex] = useState(null);
             const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, carId: null });
             
@@ -1136,6 +1232,73 @@
                 };
             }, [isDragging]);
 
+            // ---------------------------------------------------------------------
+            // Fuzzy name matching for the BVE registry.
+            //
+            // Some entries in the pasted ban lists have small typos (e.g. "Ranger
+            // Rover" instead of "Range Rover", "BullHom" instead of "Bullhorn").
+            // A plain substring check misses those entirely, which is why some
+            // owned cars were showing as "Level 0" even though they're clearly on
+            // the list. This does a word-by-word comparison and tolerates a couple
+            // of character differences per word, so near-matches still count.
+            // ---------------------------------------------------------------------
+            const normalizeBveName = (str) => (str || "")
+                .toLowerCase()
+                .replace(/[^a-z0-9\s]/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+            const levenshteinDistance = (a, b) => {
+                const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+                for (let i = 0; i <= a.length; i++) dp[i][0] = i;
+                for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+                for (let i = 1; i <= a.length; i++) {
+                    for (let j = 1; j <= b.length; j++) {
+                        if (a[i - 1] === b[j - 1]) {
+                            dp[i][j] = dp[i - 1][j - 1];
+                        } else {
+                            dp[i][j] = 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+                        }
+                    }
+                }
+                return dp[a.length][b.length];
+            };
+
+            // Two words "match" if identical, or close enough (small edit distance
+            // relative to word length) to catch a typo without over-matching.
+            const wordsFuzzyMatch = (w1, w2) => {
+                if (w1 === w2) return true;
+                if (w1.length < 3 || w2.length < 3) return false;
+                const dist = levenshteinDistance(w1, w2);
+                const maxLen = Math.max(w1.length, w2.length);
+                return dist <= Math.max(1, Math.floor(maxLen * 0.25));
+            };
+
+            // Checks whether (most of) the shorter name's words show up, possibly
+            // fuzzily, in the other name. Used as a fallback when a direct
+            // substring match fails.
+            const namesFuzzyMatch = (nameA, nameB) => {
+                const wordsA = normalizeBveName(nameA).split(' ').filter(Boolean);
+                const wordsB = normalizeBveName(nameB).split(' ').filter(Boolean);
+                if (wordsA.length === 0 || wordsB.length === 0) return false;
+                const shorter = wordsA.length <= wordsB.length ? wordsA : wordsB;
+                const longer = shorter === wordsA ? wordsB : wordsA;
+
+                let matched = 0;
+                const usedIdx = new Set();
+                shorter.forEach(w => {
+                    for (let i = 0; i < longer.length; i++) {
+                        if (usedIdx.has(i)) continue;
+                        if (wordsFuzzyMatch(w, longer[i])) {
+                            matched++;
+                            usedIdx.add(i);
+                            break;
+                        }
+                    }
+                });
+                return (matched / shorter.length) >= 0.8;
+            };
+
             const getCarLevel = (car) => {
                 const brandStr = car.brand || "";
                 const modelStr = car.modelName || "";
@@ -1155,7 +1318,10 @@
 
                 const match = BANNED_DATABASES[activeServer].find(b => {
                     const bName = b.name.toLowerCase().trim();
-                    return fullName.includes(bName) || bName.includes(fullName);
+                    if (fullName.includes(bName) || bName.includes(fullName)) return true;
+                    // Fallback: tolerate small typos in the registry (a mismatch
+                    // here used to leave correctly-banned cars stuck at Level 0).
+                    return namesFuzzyMatch(fullName, bName);
                 });
 
                 if (match) return match.level;
@@ -1704,6 +1870,233 @@
                 });
                 setGarage(updatedGarage);
                 showNotification("Image removed from gallery.");
+            };
+
+            // Renders the compact car card (year/model/level/trim/photo/HP/buy
+            // price/tags) to a canvas and downloads it as a transparent-corner
+            // PNG with the OK watermark, so it looks the same outside the site.
+            const handleSaveCardImage = async (car) => {
+                try {
+                    showNotification("Rendering card image...");
+                    const scale = 2; // draw at 2x for a crisp, full-quality export
+                    const width = 480 * scale;
+                    const height = 560 * scale;
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+
+                    const spec = getDynamicGradient(car.color);
+                    const [r, g, b] = spec.rawRGB.split(',').map(s => parseInt(s.trim(), 10));
+                    const radius = 28 * scale;
+                    const pad = 24 * scale;
+
+                    // Clip everything to a rounded rect so the four corners of
+                    // the PNG stay fully transparent instead of solid squares.
+                    traceRoundedRectPath(ctx, 0, 0, width, height, radius);
+                    ctx.save();
+                    ctx.clip();
+
+                    // Match the site's CSS radial-gradient exactly: it defaults to
+                    // "farthest-corner" sizing, and its color stops sit at
+                    // 0% / 22% / 55% / 85% (not 100%) before settling into the
+                    // near-black background -- using 100% here was why the export
+                    // looked flatter/lighter than the real card.
+                    const outerRadius = Math.sqrt((width / 2) ** 2 + (height / 2) ** 2);
+                    const bgGradient = ctx.createRadialGradient(width / 2, height / 2, 0, width / 2, height / 2, outerRadius);
+                    bgGradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.58)`);
+                    bgGradient.addColorStop(0.22, `rgba(${r}, ${g}, ${b}, 0.30)`);
+                    bgGradient.addColorStop(0.55, `rgba(${r}, ${g}, ${b}, 0.08)`);
+                    bgGradient.addColorStop(0.85, `rgba(7, 8, 11, 1)`);
+                    ctx.fillStyle = bgGradient;
+                    ctx.fillRect(0, 0, width, height);
+
+                    // Year / Model header row
+                    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                    ctx.font = `bold ${9 * scale}px sans-serif`;
+                    ctx.fillText('YEAR', pad, pad + 10 * scale);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = `bold ${14 * scale}px sans-serif`;
+                    ctx.fillText(String(car.year || ''), pad, pad + 28 * scale);
+
+                    const modelX = pad + 70 * scale;
+                    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                    ctx.font = `bold ${9 * scale}px sans-serif`;
+                    ctx.fillText('MODEL', modelX, pad + 10 * scale);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = `bold ${14 * scale}px sans-serif`;
+                    const modelText = `${car.brand || ''} ${car.modelName || ''}`.trim();
+                    let displayModel = modelText;
+                    const maxModelWidth = width - modelX - 110 * scale;
+                    while (ctx.measureText(displayModel).width > maxModelWidth && displayModel.length > 3) {
+                        displayModel = displayModel.slice(0, -1);
+                    }
+                    if (displayModel !== modelText) displayModel = displayModel.trim() + '…';
+                    ctx.fillText(displayModel, modelX, pad + 28 * scale);
+
+                    // Level badge, right-aligned
+                    const resolvedLevel = getCarLevel(car);
+                    const badgeStyles = getLevelBadgeStyles(resolvedLevel);
+                    const levelText = resolvedLevel === 'Level 0' ? '0' : resolvedLevel;
+                    ctx.font = `bold ${9 * scale}px sans-serif`;
+                    const levelLabelWidth = ctx.measureText('LEVEL').width;
+                    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                    ctx.fillText('LEVEL', width - pad - levelLabelWidth, pad + 10 * scale);
+
+                    ctx.font = `bold ${10 * scale}px sans-serif`;
+                    const levelTextWidth = ctx.measureText(levelText).width;
+                    const badgePadX = 8 * scale;
+                    const badgeWidth = levelTextWidth + badgePadX * 2;
+                    const badgeHeight = 20 * scale;
+                    const badgeX = width - pad - badgeWidth;
+                    const badgeY = pad + 14 * scale;
+                    traceRoundedRectPath(ctx, badgeX, badgeY, badgeWidth, badgeHeight, 5 * scale);
+                    ctx.fillStyle = badgeStyles.bg;
+                    ctx.fill();
+                    ctx.strokeStyle = badgeStyles.border;
+                    ctx.lineWidth = 1 * scale;
+                    ctx.stroke();
+                    ctx.fillStyle = badgeStyles.text;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(levelText, badgeX + badgeWidth / 2, badgeY + badgeHeight / 2 + 4 * scale);
+                    ctx.textAlign = 'left';
+
+                    // Trim line
+                    if (car.trim) {
+                        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                        ctx.font = `600 ${11 * scale}px sans-serif`;
+                        ctx.fillText(`Trim: ${car.trim}`, pad, pad + 48 * scale);
+                    }
+
+                    // Car photo, centered
+                    const imgBoxTop = pad + 72 * scale;
+                    const imgBoxHeight = 220 * scale;
+                    if (car.image) {
+                        try {
+                            const carImg = await loadImageEl(car.image);
+                            const maxW = width - pad * 2;
+                            const maxH = imgBoxHeight;
+                            let dw = carImg.width, dh = carImg.height;
+                            const ratio = Math.min(maxW / dw, maxH / dh);
+                            dw *= ratio; dh *= ratio;
+                            const dx = (width - dw) / 2;
+                            const dy = imgBoxTop + (imgBoxHeight - dh) / 2;
+                            ctx.drawImage(carImg, dx, dy, dw, dh);
+                        } catch (e) {
+                            console.warn("Failed loading car image for export:", e);
+                        }
+                    }
+
+                    // Divider + HP / Buy Price row
+                    const statsY = imgBoxTop + imgBoxHeight + 16 * scale;
+                    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+                    ctx.lineWidth = 1 * scale;
+                    ctx.beginPath();
+                    ctx.moveTo(pad, statsY);
+                    ctx.lineTo(width - pad, statsY);
+                    ctx.stroke();
+
+                    const statsLabelY = statsY + 20 * scale;
+                    const statsValueY = statsY + 40 * scale;
+                    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                    ctx.font = `bold ${10 * scale}px sans-serif`;
+                    ctx.fillText('HP', pad, statsLabelY);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = `bold ${14 * scale}px sans-serif`;
+                    ctx.fillText(`${car.horsepower || 0} HP`, pad, statsValueY);
+
+                    const buyLabelX = width / 2 + 10 * scale;
+                    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                    ctx.font = `bold ${10 * scale}px sans-serif`;
+                    ctx.fillText('BUY PRICE', buyLabelX, statsLabelY);
+                    ctx.fillStyle = '#30d158';
+                    ctx.font = `bold ${14 * scale}px sans-serif`;
+                    ctx.fillText(`$${Number(car.cost || 0).toLocaleString()}`, buyLabelX, statsValueY);
+
+                    // Tags row
+                    const tagsY = statsValueY + 22 * scale;
+                    if (car.tags && car.tags.length > 0) {
+                        let tagX = pad;
+                        car.tags.forEach(tag => {
+                            const tagStyles = getGreenvilleTagStyles(tag);
+                            ctx.font = `bold ${10 * scale}px sans-serif`;
+                            const tagTextWidth = ctx.measureText(tag).width;
+                            const tagPadX = 10 * scale;
+                            const tagW = tagTextWidth + tagPadX * 2;
+                            const tagH = 22 * scale;
+                            traceRoundedRectPath(ctx, tagX, tagsY, tagW, tagH, tagH / 2);
+                            ctx.fillStyle = tagStyles.bg;
+                            ctx.fill();
+                            ctx.strokeStyle = tagStyles.border;
+                            ctx.lineWidth = 1 * scale;
+                            ctx.stroke();
+                            ctx.fillStyle = tagStyles.text;
+                            ctx.textAlign = 'center';
+                            ctx.fillText(tag, tagX + tagW / 2, tagsY + tagH / 2 + 4 * scale);
+                            ctx.textAlign = 'left';
+                            tagX += tagW + 8 * scale;
+                        });
+                    } else {
+                        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                        ctx.font = `italic ${10 * scale}px sans-serif`;
+                        ctx.fillText('No tags', pad, tagsY + 15 * scale);
+                    }
+
+                    ctx.restore(); // lift the rounded-rect clip before drawing the border/watermark
+
+                    // Colored border ring matching the site's card border (same
+                    // color as the background glow) -- this was missing entirely
+                    // from the export before.
+                    const borderWidth = 2 * scale;
+                    traceRoundedRectPath(ctx, borderWidth / 2, borderWidth / 2, width - borderWidth, height - borderWidth, radius - borderWidth / 2);
+                    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.55)`;
+                    ctx.lineWidth = borderWidth;
+                    ctx.stroke();
+
+                    try {
+                        const logo = await loadOkLogo();
+                        drawOkWatermark(ctx, width, height, logo);
+                    } catch (logoErr) {
+                        console.warn("Could not load OK logo watermark:", logoErr);
+                        showNotification("Card saved, but the watermark couldn't load (check your connection).");
+                    }
+
+                    const filename = `${sanitizeFileNamePart(car.year)}_${sanitizeFileNamePart(car.brand)}_${sanitizeFileNamePart(car.modelName)}_card.png`;
+                    downloadCanvasAsPng(canvas, filename);
+                    showNotification("Card image saved!");
+                } catch (err) {
+                    console.error("Failed to save card image:", err);
+                    showNotification("Couldn't generate the card image. Please try again.");
+                }
+            };
+
+            // Downloads a single Photo Album image at full resolution with the
+            // OK watermark composited bottom-right.
+            const handleSaveGalleryPhoto = async (imgSrc, car, idx) => {
+                try {
+                    showNotification("Preparing photo for download...");
+                    const photoImg = await loadImageEl(imgSrc);
+                    const canvas = document.createElement('canvas');
+                    canvas.width = photoImg.width;
+                    canvas.height = photoImg.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(photoImg, 0, 0, canvas.width, canvas.height);
+
+                    try {
+                        const logo = await loadOkLogo();
+                        drawOkWatermark(ctx, canvas.width, canvas.height, logo);
+                    } catch (logoErr) {
+                        console.warn("Could not load OK logo watermark:", logoErr);
+                        showNotification("Photo saved, but the watermark couldn't load (check your connection).");
+                    }
+
+                    const filename = `${sanitizeFileNamePart(car.year)}_${sanitizeFileNamePart(car.brand)}_${sanitizeFileNamePart(car.modelName)}_photo_${idx + 1}.png`;
+                    downloadCanvasAsPng(canvas, filename);
+                    showNotification("Photo saved!");
+                } catch (err) {
+                    console.error("Failed to save gallery photo:", err);
+                    showNotification("Couldn't save that photo. Please try again.");
+                }
             };
 
             const handleAddFrontCardPic = (e) => {
@@ -2454,16 +2847,32 @@
                                         <div 
                                             style={{ background: gallerySpec.gradient, borderColor: gallerySpec.border }}
                                             className="w-full max-w-[480px] rounded-3xl p-6 border transition-all card-transition relative shadow-2xl h-full min-h-[380px] flex flex-col justify-between"
+                                            onMouseEnter={() => setIsVignetteHovered(true)}
+                                            onMouseLeave={() => setIsVignetteHovered(false)}
                                         >
                                             <AmbientSpheres colorRGB={gallerySpec.rawRGB} count={6} />
 
+                                            <button
+                                                onClick={() => handleSaveCardImage(selectedGalleryCar)}
+                                                className={`absolute top-4 right-4 w-10 h-10 bg-black/75 hover:bg-emerald-600/90 border border-white/10 hover:border-emerald-500/30 rounded-full flex items-center justify-center text-white transition-all duration-200 shadow-xl z-20 ${isVignetteHovered ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                                                title="Save Card as PNG"
+                                            >
+                                                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                                </svg>
+                                            </button>
+
                                             <div className="relative z-10">
                                                 <div className="flex gap-6 items-baseline">
+                                                    <div className="flex flex-col">
+                                                        <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider mb-1">Year</span>
+                                                        <span className="text-sm font-bold text-white leading-none font-sans">{selectedGalleryCar.year}</span>
+                                                    </div>
                                                     <div className="flex flex-col flex-1 min-w-0">
-                                                        <div className="text-[9px] text-white/40 font-bold uppercase tracking-wider mb-1">Model</div>
-                                                        <div className="text-sm font-bold text-white leading-none truncate font-sans">
-                                                            {selectedGalleryCar.year} {selectedGalleryCar.brand} {selectedGalleryCar.modelName}
-                                                        </div>
+                                                        <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider mb-1">Model</span>
+                                                        <span className="text-sm font-bold text-white leading-none truncate font-sans">
+                                                            {selectedGalleryCar.brand} {selectedGalleryCar.modelName}
+                                                        </span>
                                                     </div>
                                                     <div className="text-right flex-shrink-0">
                                                         <div className="text-[10px] text-white/40 font-bold uppercase tracking-wider mb-0.5">Level</div>
@@ -2494,28 +2903,48 @@
                                                 )}
                                             </div>
 
-                                            <div className="z-10 flex items-center justify-between border-t border-white/[0.04] pt-2">
-                                                <div className="flex gap-2">
-                                                    {(selectedGalleryCar.tags && selectedGalleryCar.tags.length > 0) ? (
-                                                        selectedGalleryCar.tags.map(tag => {
-                                                            const styles = getGreenvilleTagStyles(tag);
-                                                            return (
-                                                                <span 
-                                                                    key={tag} 
-                                                                    style={{ backgroundColor: styles.bg, color: styles.text, borderColor: styles.border }}
-                                                                    className="text-[10px] px-2.5 py-0.5 rounded-full font-bold border font-sans"
-                                                                >
-                                                                    {tag}
-                                                                </span>
-                                                            );
-                                                        })
-                                                    ) : (
-                                                        <span className="text-[10px] text-white/20 italic font-sans">No tags</span>
+                                            <div className="z-10">
+                                                <div className="grid grid-cols-2 gap-x-2 pb-2 border-t border-white/[0.04] pt-2">
+                                                    <div>
+                                                        <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-0.5 font-sans">
+                                                            {isVignetteHovered ? 'Horsepower' : 'Top Speed'}
+                                                        </span>
+                                                        <span className="text-xs font-bold text-white block font-sans">
+                                                            {isVignetteHovered ? `${selectedGalleryCar.horsepower} HP` : `${selectedGalleryCar.topSpeed} mph`}
+                                                        </span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-0.5 font-sans">
+                                                            {isVignetteHovered ? 'Sell Price' : 'Buy Price'}
+                                                        </span>
+                                                        <span className={`text-xs font-bold block font-sans ${isVignetteHovered ? 'text-[#ff453a]' : 'text-[#30d158]'}`}>
+                                                            {isVignetteHovered ? `$${galleryEstimatedSell.toLocaleString()}` : `$${selectedGalleryCar.cost?.toLocaleString()}`}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center justify-between border-t border-white/[0.04] pt-2">
+                                                    <div className="flex gap-2">
+                                                        {(selectedGalleryCar.tags && selectedGalleryCar.tags.length > 0) ? (
+                                                            selectedGalleryCar.tags.map(tag => {
+                                                                const styles = getGreenvilleTagStyles(tag);
+                                                                return (
+                                                                    <span 
+                                                                        key={tag} 
+                                                                        style={{ backgroundColor: styles.bg, color: styles.text, borderColor: styles.border }}
+                                                                        className="text-[10px] px-2.5 py-0.5 rounded-full font-bold border font-sans"
+                                                                    >
+                                                                        {tag}
+                                                                    </span>
+                                                                );
+                                                            })
+                                                        ) : (
+                                                            <span className="text-[10px] text-white/20 italic font-sans">No tags</span>
+                                                        )}
+                                                    </div>
+                                                    {selectedGalleryCar.favorite && (
+                                                        <span className="text-[10px] text-[#ffd60a] font-bold">★</span>
                                                     )}
                                                 </div>
-                                                {selectedGalleryCar.favorite && (
-                                                    <span className="text-[10px] text-[#ffd60a] font-bold">★</span>
-                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -2579,6 +3008,19 @@
                                                                 >
                                                                     <img src={img} alt={`album-${idx}`} className="w-full h-full object-cover bg-transparent" />
                                                                     
+                                                                    <button 
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            handleSaveGalleryPhoto(img, selectedGalleryCar, idx);
+                                                                        }}
+                                                                        className="absolute top-4 left-4 w-10 h-10 bg-black/75 hover:bg-emerald-600/90 border border-white/10 hover:border-emerald-500/30 rounded-full flex items-center justify-center text-white transition-all duration-200 opacity-0 group-hover/item:opacity-100 shadow-xl z-20"
+                                                                        title="Save Photo as PNG"
+                                                                    >
+                                                                        <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor">
+                                                                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                                                        </svg>
+                                                                    </button>
+
                                                                     <button 
                                                                         onClick={(e) => {
                                                                             e.stopPropagation();
