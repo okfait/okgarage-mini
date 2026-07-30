@@ -667,16 +667,36 @@
         // (never touching it), semi-transparent, with a soft white glow behind
         // it so the black logo stands out against dark car photos/cards.
         const drawOkWatermark = (ctx, canvasWidth, canvasHeight, logoImg) => {
-            const targetWidth = Math.round(canvasWidth * 0.16);
+            const targetWidth = Math.round(canvasWidth * 0.15);
             const targetHeight = Math.round(targetWidth * (logoImg.height / logoImg.width));
             const margin = Math.round(canvasWidth * 0.035);
             const x = canvasWidth - targetWidth - margin;
             const y = canvasHeight - targetHeight - margin;
 
+            // Build the glow on an offscreen canvas: draw the logo, blur it with
+            // a real Gaussian blur (ctx.filter), then recolor the blurred
+            // silhouette to solid white via "source-in". This hugs the actual
+            // shape of the logo, so it reads as a soft halo instead of the
+            // blocky/flat smudge a plain ctx.shadowBlur drop-shadow produces.
+            const glowPad = Math.round(targetWidth * 0.7);
+            const glowCanvas = document.createElement('canvas');
+            glowCanvas.width = targetWidth + glowPad * 2;
+            glowCanvas.height = targetHeight + glowPad * 2;
+            const glowCtx = glowCanvas.getContext('2d');
+            glowCtx.filter = `blur(${Math.round(targetWidth * 0.1)}px)`;
+            glowCtx.drawImage(logoImg, glowPad, glowPad, targetWidth, targetHeight);
+            glowCtx.filter = 'none';
+            glowCtx.globalCompositeOperation = 'source-in';
+            glowCtx.fillStyle = '#ffffff';
+            glowCtx.fillRect(0, 0, glowCanvas.width, glowCanvas.height);
+
             ctx.save();
-            ctx.globalAlpha = 0.55;
-            ctx.shadowColor = 'rgba(255, 255, 255, 0.95)';
-            ctx.shadowBlur = Math.round(canvasWidth * 0.03);
+            ctx.globalAlpha = 0.8;
+            ctx.drawImage(glowCanvas, x - glowPad, y - glowPad);
+            ctx.restore();
+
+            ctx.save();
+            ctx.globalAlpha = 0.6;
             ctx.drawImage(logoImg, x, y, targetWidth, targetHeight);
             ctx.restore();
         };
@@ -1879,8 +1899,10 @@
                 try {
                     showNotification("Rendering card image...");
                     const scale = 2; // draw at 2x for a crisp, full-quality export
+                    // Matches the live card's actual proportions (roughly square,
+                    // not the taller shape used before).
                     const width = 480 * scale;
-                    const height = 560 * scale;
+                    const height = 522 * scale;
                     const canvas = document.createElement('canvas');
                     canvas.width = width;
                     canvas.height = height;
@@ -1897,11 +1919,16 @@
                     ctx.save();
                     ctx.clip();
 
-                    // Match the site's CSS radial-gradient exactly: it defaults to
-                    // "farthest-corner" sizing, and its color stops sit at
-                    // 0% / 22% / 55% / 85% (not 100%) before settling into the
-                    // near-black background -- using 100% here was why the export
-                    // looked flatter/lighter than the real card.
+                    // IMPORTANT: fill a fully OPAQUE near-black base first. On the
+                    // real site the colored glow is a semi-transparent layer
+                    // sitting on top of the page's own solid dark background --
+                    // without that solid base here, the glow's semi-transparent
+                    // middle was showing through to nothing (true transparency),
+                    // which is why the export looked like a flat, washed-out
+                    // solid blue instead of a dark card with a glow on it.
+                    ctx.fillStyle = 'rgb(7, 8, 11)';
+                    ctx.fillRect(0, 0, width, height);
+
                     const outerRadius = Math.sqrt((width / 2) ** 2 + (height / 2) ** 2);
                     const bgGradient = ctx.createRadialGradient(width / 2, height / 2, 0, width / 2, height / 2, outerRadius);
                     bgGradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.58)`);
@@ -1962,16 +1989,29 @@
                     ctx.textAlign = 'left';
 
                     // Trim line
+                    const headerBottom = pad + 48 * scale;
                     if (car.trim) {
                         ctx.fillStyle = 'rgba(255,255,255,0.6)';
                         ctx.font = `600 ${11 * scale}px sans-serif`;
-                        ctx.fillText(`Trim: ${car.trim}`, pad, pad + 48 * scale);
+                        ctx.fillText(`Trim: ${car.trim}`, pad, headerBottom);
                     }
 
-                    // Car photo, centered
-                    const imgBoxTop = pad + 72 * scale;
-                    const imgBoxHeight = 220 * scale;
-                    if (car.image) {
+                    // Bottom block (divider + HP/Buy Price + tags) is pinned to
+                    // the bottom of the card, same as the site's flexbox layout
+                    // (header at top, image fills the middle, stats+tags at the
+                    // very bottom) -- this is what was missing before; the stats
+                    // row was floating right under the image instead of sitting
+                    // near the bottom edge.
+                    const tagsRowHeight = 26 * scale;
+                    const statsBlockHeight = 74 * scale;
+                    const bottomBlockHeight = statsBlockHeight + tagsRowHeight;
+                    const statsY = height - pad - bottomBlockHeight;
+
+                    // Car photo centered in the flexible space between the header
+                    // and the bottom block.
+                    const imgBoxTop = headerBottom + 16 * scale;
+                    const imgBoxHeight = statsY - imgBoxTop - 16 * scale;
+                    if (car.image && imgBoxHeight > 0) {
                         try {
                             const carImg = await loadImageEl(car.image);
                             const maxW = width - pad * 2;
@@ -1988,7 +2028,6 @@
                     }
 
                     // Divider + HP / Buy Price row
-                    const statsY = imgBoxTop + imgBoxHeight + 16 * scale;
                     ctx.strokeStyle = 'rgba(255,255,255,0.08)';
                     ctx.lineWidth = 1 * scale;
                     ctx.beginPath();
@@ -1996,8 +2035,8 @@
                     ctx.lineTo(width - pad, statsY);
                     ctx.stroke();
 
-                    const statsLabelY = statsY + 20 * scale;
-                    const statsValueY = statsY + 40 * scale;
+                    const statsLabelY = statsY + 22 * scale;
+                    const statsValueY = statsY + 42 * scale;
                     ctx.fillStyle = 'rgba(255,255,255,0.4)';
                     ctx.font = `bold ${10 * scale}px sans-serif`;
                     ctx.fillText('HP', pad, statsLabelY);
@@ -2014,7 +2053,7 @@
                     ctx.fillText(`$${Number(car.cost || 0).toLocaleString()}`, buyLabelX, statsValueY);
 
                     // Tags row
-                    const tagsY = statsValueY + 22 * scale;
+                    const tagsY = statsY + statsBlockHeight;
                     if (car.tags && car.tags.length > 0) {
                         let tagX = pad;
                         car.tags.forEach(tag => {
