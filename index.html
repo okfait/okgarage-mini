@@ -193,6 +193,8 @@
             { name: "2026 Western Protogen", level: "L1" },
             { name: "2026 Western Protogen-X", level: "L1" },
             { name: "2026 Western Segal (convertible included)", level: "L1" },
+            { name: "2026 Ford Mustang Dark Horse SC", level: "L1" },
+            { name: "2025 Ford F-150 Raptor R", level: "L1" },
 
             // Level 2 BVE Registry
             { name: "1964 BITSY Classic \"Mr Grain\"", level: "L2" },
@@ -263,6 +265,8 @@
             { name: "2025 Audi RS Q8", level: "L2" },
             { name: "2025 Audi RS 6 Avant", level: "L2" },
             { name: "2025 Lawn-King G50X Supper Bagger", level: "L2" },
+            { name: "2020 Ford GT", level: "L2" },
+            { name: "2005 Ford GT", level: "L2" },
             { name: "All limited or event vehicles", level: "L2" },
             { name: "All HEEN/DOGG Vehicles", level: "L2" },
             { name: "All Plaid Vehicles", level: "L2" },
@@ -278,7 +282,6 @@
             { name: "2017 Meisterklassen Jogger 2500", level: "L3" },
             { name: "2020 BullHorn SuperCarrier", level: "L3" },
             { name: "2020 Durant Voyager (Can only be used for the campsite RP)", level: "L3" },
-            { name: "2020 Surrey Speedlet", level: "L3" },
             { name: "2022 Celestial Type-5 “Reactive Series”", level: "L3" },
             { name: "2023 Falcon Advance (Palladium Off-Road Camper opt.)", level: "L3" },
             { name: "Western Hawk Go-Kart", level: "L3" },
@@ -326,6 +329,7 @@
             { name: "Winter Sleigh Event Vehicle", level: "L4" },
             { name: "Fox Mountain Motors SLK-6789", level: "L4" },
             { name: "Fox Mountain Motors Vertex", level: "L4" },
+            { name: "2006 Ford Crown Victoria WSP Taxi", level: "L4" },
 
             // Permbanned BVE Registry
             { name: "Job Application", level: "Permbanned" },
@@ -385,10 +389,7 @@
             { name: "2014 Marlin Motors Vivacite S", level: "L2" },
             { name: "2016 BKM Risen", level: "L2" },
             { name: "2017 BuliHorn SFP Python", level: "L2" },
-            { name: "2017 Stuttgart Koblenz 63", level: "L2" },
             { name: "2018 BullHom Buffalo SFP-10", level: "L2" },
-            { name: "2018 Stuttgart Essen 63", level: "L2" },
-            { name: "2019 Land Rover Range Rover Sport", level: "L2" },
             { name: "2020 Land Rover Range Rover Velar", level: "L2" },
             { name: "2020 Lotus Evora", level: "L2" },
             { name: "2020 Overland Apache SFP", level: "L2" },
@@ -439,12 +440,10 @@
             { name: "2016 Alfa Romeo 4C", level: "L3" },
             { name: "2017 Navara Horizon", level: "L3" },
             { name: "2021 Marlin Motors Bristol", level: "L3" },
-            { name: "2021 Surrey Grand Tourer", level: "L3" },
             { name: "2021 Audi R8 V10 Spyder", level: "L3" },
             { name: "2021 Bullhorn Determinator", level: "L3" },
             { name: "2021 Bovine Pueblo Fury", level: "L3" },
             { name: "2022 Mauntley Cardiff", level: "L3" },
-            { name: "2022 Ferdinand Rapido Coupe", level: "L3" },
             { name: "2022 SirRodgers Constellation", level: "L3" },
             { name: "2023 Bullhorn Determinator", level: "L3" },
             { name: "2023 Silhouette Rinoceronte", level: "L3" },
@@ -663,40 +662,71 @@
             return cachedLogoImgPromise;
         };
 
-        // Draws the OK logo bottom-right of a canvas: inset from the corner
-        // (never touching it), semi-transparent, with a soft white glow behind
-        // it so the black logo stands out against dark car photos/cards.
-        const drawOkWatermark = (ctx, canvasWidth, canvasHeight, logoImg) => {
-            const targetWidth = Math.round(canvasWidth * 0.15);
+        // Second logo: a self-contained badge (already has its own background
+        // baked in) used inline in the card export's stats row. Drawn exactly
+        // as-is with no glow/outline/opacity effects applied.
+        const OK_BADGE_LOGO_URL = 'https://raw.githubusercontent.com/okfait/okgarage-mini/main/01%20(92).png';
+        let cachedBadgeLogoImgPromise = null;
+
+        const loadOkBadgeLogo = () => {
+            if (cachedBadgeLogoImgPromise) return cachedBadgeLogoImgPromise;
+            const attempt = (async () => {
+                const response = await fetch(OK_BADGE_LOGO_URL, { mode: 'cors' });
+                if (!response.ok) throw new Error("Failed to fetch OK badge logo: " + response.status);
+                const blob = await response.blob();
+                const objectUrl = URL.createObjectURL(blob);
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.onload = () => resolve(img);
+                    img.onerror = () => reject(new Error("Failed to decode OK badge logo image"));
+                    img.src = objectUrl;
+                });
+            })();
+            attempt.catch(() => { cachedBadgeLogoImgPromise = null; });
+            cachedBadgeLogoImgPromise = attempt;
+            return cachedBadgeLogoImgPromise;
+        };
+
+        // Draws the transparent OK logo with a clean white outline hugging its
+        // silhouette -- used as a corner watermark on Photo Album exports. The
+        // outline is built by stamping the shape (recolored solid white) at
+        // several offsets around a ring, which reads as a crisp border instead
+        // of the flat smudge a plain shadow/blur glow produces.
+        const drawOkWatermark = (ctx, canvasWidth, canvasHeight, logoImg, options = {}) => {
+            const sizeRatio = options.sizeRatio ?? 0.15;
+            const alpha = options.alpha ?? 0.6;
+            const marginRatio = options.marginRatio ?? 0.035;
+
+            const targetWidth = Math.round(canvasWidth * sizeRatio);
             const targetHeight = Math.round(targetWidth * (logoImg.height / logoImg.width));
-            const margin = Math.round(canvasWidth * 0.035);
+            const margin = Math.round(canvasWidth * marginRatio);
             const x = canvasWidth - targetWidth - margin;
             const y = canvasHeight - targetHeight - margin;
 
-            // Build the glow on an offscreen canvas: draw the logo, blur it with
-            // a real Gaussian blur (ctx.filter), then recolor the blurred
-            // silhouette to solid white via "source-in". This hugs the actual
-            // shape of the logo, so it reads as a soft halo instead of the
-            // blocky/flat smudge a plain ctx.shadowBlur drop-shadow produces.
-            const glowPad = Math.round(targetWidth * 0.7);
-            const glowCanvas = document.createElement('canvas');
-            glowCanvas.width = targetWidth + glowPad * 2;
-            glowCanvas.height = targetHeight + glowPad * 2;
-            const glowCtx = glowCanvas.getContext('2d');
-            glowCtx.filter = `blur(${Math.round(targetWidth * 0.1)}px)`;
-            glowCtx.drawImage(logoImg, glowPad, glowPad, targetWidth, targetHeight);
-            glowCtx.filter = 'none';
-            glowCtx.globalCompositeOperation = 'source-in';
-            glowCtx.fillStyle = '#ffffff';
-            glowCtx.fillRect(0, 0, glowCanvas.width, glowCanvas.height);
+            const outlineWidth = Math.max(2, Math.round(targetWidth * 0.05));
+            const outlinePad = outlineWidth + 2;
+            const maskCanvas = document.createElement('canvas');
+            maskCanvas.width = targetWidth + outlinePad * 2;
+            maskCanvas.height = targetHeight + outlinePad * 2;
+            const maskCtx = maskCanvas.getContext('2d');
+            const steps = 16;
+            for (let i = 0; i < steps; i++) {
+                const angle = (i / steps) * Math.PI * 2;
+                const dx = Math.cos(angle) * outlineWidth;
+                const dy = Math.sin(angle) * outlineWidth;
+                maskCtx.drawImage(logoImg, outlinePad + dx, outlinePad + dy, targetWidth, targetHeight);
+            }
+            maskCtx.globalCompositeOperation = 'source-in';
+            maskCtx.fillStyle = '#ffffff';
+            maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
 
             ctx.save();
-            ctx.globalAlpha = 0.8;
-            ctx.drawImage(glowCanvas, x - glowPad, y - glowPad);
+            ctx.globalAlpha = alpha;
+            ctx.drawImage(maskCanvas, x - outlinePad, y - outlinePad);
             ctx.restore();
 
             ctx.save();
-            ctx.globalAlpha = 0.6;
+            ctx.globalAlpha = alpha;
             ctx.drawImage(logoImg, x, y, targetWidth, targetHeight);
             ctx.restore();
         };
@@ -873,6 +903,7 @@
             });
 
             const [customHex, setCustomHex] = useState('#5a5f6e');
+            const [paletteContextMenu, setPaletteContextMenu] = useState(null);
             const [geminiKey, setGeminiKey] = useState(() => {
                 try { return localStorage.getItem('gemini_api_key') || ''; } catch (e) { return ''; }
             });
@@ -1912,6 +1943,7 @@
                     const [r, g, b] = spec.rawRGB.split(',').map(s => parseInt(s.trim(), 10));
                     const radius = 28 * scale;
                     const pad = 24 * scale;
+                    const baseR = 7, baseG = 8, baseB = 11; // near-black card base
 
                     // Clip everything to a rounded rect so the four corners of
                     // the PNG stay fully transparent instead of solid squares.
@@ -1919,22 +1951,22 @@
                     ctx.save();
                     ctx.clip();
 
-                    // IMPORTANT: fill a fully OPAQUE near-black base first. On the
-                    // real site the colored glow is a semi-transparent layer
-                    // sitting on top of the page's own solid dark background --
-                    // without that solid base here, the glow's semi-transparent
-                    // middle was showing through to nothing (true transparency),
-                    // which is why the export looked like a flat, washed-out
-                    // solid blue instead of a dark card with a glow on it.
-                    ctx.fillStyle = 'rgb(7, 8, 11)';
-                    ctx.fillRect(0, 0, width, height);
-
+                    // Background: blend the selected color into the near-black
+                    // base as fully OPAQUE colors at every stop (rather than
+                    // varying alpha), so there's no alpha+color joint
+                    // interpolation. That joint interpolation was the actual
+                    // cause of the "extra weird ring" artifact -- mixing alpha
+                    // and hue at the same time doesn't fade smoothly on a canvas
+                    // gradient. Blending to solid colors ourselves guarantees a
+                    // clean single fade from the color down to near-black.
+                    const blend = (t) => `rgb(${Math.round(r * t + baseR * (1 - t))}, ${Math.round(g * t + baseG * (1 - t))}, ${Math.round(b * t + baseB * (1 - t))})`;
                     const outerRadius = Math.sqrt((width / 2) ** 2 + (height / 2) ** 2);
                     const bgGradient = ctx.createRadialGradient(width / 2, height / 2, 0, width / 2, height / 2, outerRadius);
-                    bgGradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.58)`);
-                    bgGradient.addColorStop(0.22, `rgba(${r}, ${g}, ${b}, 0.30)`);
-                    bgGradient.addColorStop(0.55, `rgba(${r}, ${g}, ${b}, 0.08)`);
-                    bgGradient.addColorStop(0.85, `rgba(7, 8, 11, 1)`);
+                    bgGradient.addColorStop(0, blend(0.58));
+                    bgGradient.addColorStop(0.22, blend(0.30));
+                    bgGradient.addColorStop(0.55, blend(0.08));
+                    bgGradient.addColorStop(0.85, blend(0));
+                    bgGradient.addColorStop(1, blend(0));
                     ctx.fillStyle = bgGradient;
                     ctx.fillRect(0, 0, width, height);
 
@@ -1996,14 +2028,12 @@
                         ctx.fillText(`Trim: ${car.trim}`, pad, headerBottom);
                     }
 
-                    // Bottom block (divider + HP/Buy Price + tags) is pinned to
-                    // the bottom of the card, same as the site's flexbox layout
+                    // Bottom block (divider + stats row + tags) is pinned to the
+                    // bottom of the card, same as the site's flexbox layout
                     // (header at top, image fills the middle, stats+tags at the
-                    // very bottom) -- this is what was missing before; the stats
-                    // row was floating right under the image instead of sitting
-                    // near the bottom edge.
+                    // very bottom).
                     const tagsRowHeight = 26 * scale;
-                    const statsBlockHeight = 74 * scale;
+                    const statsBlockHeight = 96 * scale;
                     const bottomBlockHeight = statsBlockHeight + tagsRowHeight;
                     const statsY = height - pad - bottomBlockHeight;
 
@@ -2027,7 +2057,7 @@
                         }
                     }
 
-                    // Divider + HP / Buy Price row
+                    // Divider
                     ctx.strokeStyle = 'rgba(255,255,255,0.08)';
                     ctx.lineWidth = 1 * scale;
                     ctx.beginPath();
@@ -2035,22 +2065,66 @@
                     ctx.lineTo(width - pad, statsY);
                     ctx.stroke();
 
-                    const statsLabelY = statsY + 22 * scale;
-                    const statsValueY = statsY + 42 * scale;
-                    ctx.fillStyle = 'rgba(255,255,255,0.4)';
-                    ctx.font = `bold ${10 * scale}px sans-serif`;
-                    ctx.fillText('HP', pad, statsLabelY);
-                    ctx.fillStyle = '#ffffff';
-                    ctx.font = `bold ${14 * scale}px sans-serif`;
-                    ctx.fillText(`${car.horsepower || 0} HP`, pad, statsValueY);
+                    // 5-column stats row: Top Speed | HP | Logo badge | Sell Price | Color
+                    const colWidth = (width - pad * 2) / 5;
+                    const colCenter = (i) => pad + colWidth * (i + 0.5);
+                    const labelY = statsY + 20 * scale;
+                    const valueY = statsY + 42 * scale;
+                    const estimatedSell = calculateEstimatedSellPrice(car.cost, car.miles);
 
-                    const buyLabelX = width / 2 + 10 * scale;
+                    ctx.textAlign = 'center';
+
                     ctx.fillStyle = 'rgba(255,255,255,0.4)';
-                    ctx.font = `bold ${10 * scale}px sans-serif`;
-                    ctx.fillText('BUY PRICE', buyLabelX, statsLabelY);
-                    ctx.fillStyle = '#30d158';
-                    ctx.font = `bold ${14 * scale}px sans-serif`;
-                    ctx.fillText(`$${Number(car.cost || 0).toLocaleString()}`, buyLabelX, statsValueY);
+                    ctx.font = `bold ${8.5 * scale}px sans-serif`;
+                    ctx.fillText('TOP SPEED', colCenter(0), labelY);
+                    ctx.fillText('HP', colCenter(1), labelY);
+                    ctx.fillText('SELL PRICE', colCenter(3), labelY);
+                    ctx.fillText('COLOR', colCenter(4), labelY);
+
+                    ctx.font = `bold ${12 * scale}px sans-serif`;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillText(`${car.topSpeed || 0} mph`, colCenter(0), valueY);
+                    ctx.fillText(`${car.horsepower || 0} HP`, colCenter(1), valueY);
+                    ctx.fillStyle = '#ff453a';
+                    ctx.fillText(`$${estimatedSell.toLocaleString()}`, colCenter(3), valueY);
+
+                    // Color swatch: name label on top, circle + color name below
+                    const colorName = (() => {
+                        if (!car.color) return 'Custom';
+                        const match = palette.find(p => p.name.toLowerCase() === car.color.toLowerCase());
+                        return match ? match.name : car.color;
+                    })();
+                    const swatchY = statsY + 34 * scale;
+                    const swatchRadius = 7 * scale;
+                    ctx.beginPath();
+                    ctx.arc(colCenter(4), swatchY, swatchRadius, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+                    ctx.lineWidth = 1 * scale;
+                    ctx.stroke();
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = `600 ${8.5 * scale}px sans-serif`;
+                    let displayColorName = colorName;
+                    while (ctx.measureText(displayColorName).width > colWidth - 6 * scale && displayColorName.length > 3) {
+                        displayColorName = displayColorName.slice(0, -1);
+                    }
+                    if (displayColorName !== colorName) displayColorName = displayColorName.trim() + '…';
+                    ctx.fillText(displayColorName, colCenter(4), swatchY + 18 * scale);
+
+                    // Logo badge (self-contained artwork, drawn as-is, no effects)
+                    try {
+                        const badgeLogo = await loadOkBadgeLogo();
+                        const badgeSize = 44 * scale;
+                        const bw = badgeSize;
+                        const bh = badgeSize * (badgeLogo.height / badgeLogo.width);
+                        ctx.drawImage(badgeLogo, colCenter(2) - bw / 2, statsY + (statsBlockHeight - bh) / 2 - 4 * scale, bw, bh);
+                    } catch (logoErr) {
+                        console.warn("Could not load OK badge logo:", logoErr);
+                        showNotification("Card saved, but the logo couldn't load (check your connection).");
+                    }
+
+                    ctx.textAlign = 'left';
 
                     // Tags row
                     const tagsY = statsY + statsBlockHeight;
@@ -2081,24 +2155,17 @@
                         ctx.fillText('No tags', pad, tagsY + 15 * scale);
                     }
 
-                    ctx.restore(); // lift the rounded-rect clip before drawing the border/watermark
+                    ctx.restore(); // lift the rounded-rect clip before drawing the border
 
-                    // Colored border ring matching the site's card border (same
-                    // color as the background glow) -- this was missing entirely
-                    // from the export before.
-                    const borderWidth = 2 * scale;
+                    // Thin colored border ring matching the site's card border
+                    // (same color as the background glow, at the same low
+                    // opacity the site uses -- the export's border was both too
+                    // thick and too opaque before).
+                    const borderWidth = 1 * scale;
                     traceRoundedRectPath(ctx, borderWidth / 2, borderWidth / 2, width - borderWidth, height - borderWidth, radius - borderWidth / 2);
-                    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.55)`;
+                    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.3)`;
                     ctx.lineWidth = borderWidth;
                     ctx.stroke();
-
-                    try {
-                        const logo = await loadOkLogo();
-                        drawOkWatermark(ctx, width, height, logo);
-                    } catch (logoErr) {
-                        console.warn("Could not load OK logo watermark:", logoErr);
-                        showNotification("Card saved, but the watermark couldn't load (check your connection).");
-                    }
 
                     const filename = `${sanitizeFileNamePart(car.year)}_${sanitizeFileNamePart(car.brand)}_${sanitizeFileNamePart(car.modelName)}_card.png`;
                     downloadCanvasAsPng(canvas, filename);
@@ -2123,7 +2190,7 @@
 
                     try {
                         const logo = await loadOkLogo();
-                        drawOkWatermark(ctx, canvas.width, canvas.height, logo);
+                        drawOkWatermark(ctx, canvas.width, canvas.height, logo, { sizeRatio: 0.08, alpha: 1, marginRatio: 0.03 });
                     } catch (logoErr) {
                         console.warn("Could not load OK logo watermark:", logoErr);
                         showNotification("Photo saved, but the watermark couldn't load (check your connection).");
@@ -2138,6 +2205,37 @@
                 }
             };
 
+            // Keeps the hidden sampling canvas in sync with whatever picture is
+            // currently shown for color-sampling. This used to only happen
+            // inside the upload handler below, so editing an EXISTING car (whose
+            // picture is set directly via setSampledPicData(car.image), never
+            // going through that upload flow) left the canvas blank -- any click
+            // then sampled from an empty canvas and always came back black.
+            useEffect(() => {
+                if (!sampledPicData) return;
+                const img = new Image();
+                img.onload = () => {
+                    if (!paletteCanvasRef.current) return;
+                    const canvas = paletteCanvasRef.current;
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0);
+                };
+                img.src = sampledPicData;
+            }, [sampledPicData]);
+
+            const handleDeletePaletteSwatch = (name) => {
+                const nextPalette = palette.filter(p => p.name !== name);
+                setPalette(nextPalette);
+                try {
+                    localStorage.setItem('okgarage_color_palette', JSON.stringify(nextPalette));
+                } catch (e) {}
+                setPaletteContextMenu(null);
+                showNotification(`Removed "${name}" from vignette themes.`);
+            };
+
             const handleAddFrontCardPic = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
@@ -2146,19 +2244,6 @@
                 reader.onload = async (event) => {
                     const compressed = await compressBase64(event.target.result, 800, 600);
                     setSampledPicData(compressed);
-                    
-                    const img = new Image();
-                    img.onload = () => {
-                        if (paletteCanvasRef.current) {
-                            const canvas = paletteCanvasRef.current;
-                            canvas.width = img.width;
-                            canvas.height = img.height;
-                            const ctx = canvas.getContext('2d');
-                            ctx.drawImage(img, 0, 0);
-                        }
-                    };
-                    img.src = compressed;
-                    
                     setCurrentCar(prev => ({ ...prev, image: compressed }));
                     showNotification("Optimized front cover uploaded! Tap cover to extract paints.");
                 };
@@ -3151,6 +3236,10 @@
                                                             setCurrentCar({ ...currentCar, color: colorObj.name });
                                                             setCustomHex(colorObj.hex);
                                                         }}
+                                                        onContextMenu={(e) => {
+                                                            e.preventDefault();
+                                                            setPaletteContextMenu({ name: colorObj.name, x: e.clientX, y: e.clientY });
+                                                        }}
                                                         style={{ backgroundColor: colorObj.hex }}
                                                         className={`aspect-square rounded-xl border flex items-center justify-center transition-all ${
                                                             isSelected ? 'border-white scale-110 shadow-[0_0_15px_rgba(255,255,255,0.4)]' : 'border-white/10 hover:scale-105'
@@ -3323,26 +3412,28 @@
                                     </div>
                                 </form>
                             </div>
-                        </div>
-                    )}
 
-                    {!galleryModalState.isRendered && !addEditModalState.isRendered && (
-                        <div id="sync-settings" className="fixed bottom-6 left-6 z-[130]">
-                            <button 
-                                onClick={() => {
-                                    const key = prompt("Enter Gemini API Key (leaves secure local session):", geminiKey);
-                                    if (key !== null) {
-                                        setGeminiKey(key.trim());
-                                        showNotification(key.trim() ? "Gemini Engine initialized! Click ✨ Ask Gemini in Photo Album to generate lore." : "Key cleared. Using failsafe generator.");
-                                    }
-                                }}
-                                className="h-9 px-4 rounded-xl bg-[#ffffff]/[0.05] backdrop-blur-xl border border-white/[0.06] text-[11px] font-medium text-white/70 hover:text-white hover:bg-white/10 flex items-center gap-2 transition-all font-sans"
-                            >
-                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3M15.5 7.5L19 4" />
-                                </svg>
-                                <span>{geminiKey ? "Gemini: Active" : "Setup Gemini"}</span>
-                            </button>
+                            {paletteContextMenu && (
+                                <div 
+                                    className="fixed inset-0 z-[110]" 
+                                    onClick={() => setPaletteContextMenu(null)}
+                                    onContextMenu={(e) => { e.preventDefault(); setPaletteContextMenu(null); }}
+                                >
+                                    <div 
+                                        style={{ top: paletteContextMenu.y, left: paletteContextMenu.x }}
+                                        className="fixed bg-[#1a1b20] border border-white/10 rounded-xl shadow-2xl py-1 z-[111]"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDeletePaletteSwatch(paletteContextMenu.name)}
+                                            className="px-4 py-2 text-[11px] font-bold text-red-400 hover:bg-red-500/10 transition-colors whitespace-nowrap font-sans"
+                                        >
+                                            Delete "{paletteContextMenu.name}"
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
