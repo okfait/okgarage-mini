@@ -1668,7 +1668,7 @@
                 // Compress core images to save storage space
                 let compressedCover = currentCar.image || "";
                 if (compressedCover && compressedCover.startsWith("data:image")) {
-                    compressedCover = await compressBase64(compressedCover, 800, 600, 0.9);
+                    compressedCover = await compressBase64(compressedCover, 1200, 900, 0.92);
                 }
 
                 const finalCar = {
@@ -2065,6 +2065,8 @@
                     canvas.width = width;
                     canvas.height = height;
                     const ctx = canvas.getContext('2d');
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = 'high';
 
                     const spec = getDynamicGradient(car.color);
                     const [r, g, b] = spec.rawRGB.split(',').map(s => parseInt(s.trim(), 10));
@@ -2231,15 +2233,18 @@
                     // opacity effects). Cropped to its actual visible content
                     // first so it's genuinely centered in its column and can be
                     // sized generously without empty padding eating into it.
+                    // Vertically aligned with the label/value text rows (not the
+                    // full stats block, which has extra padding below before the
+                    // tags row) -- that's what made it look off-center/too low.
                     try {
                         const badgeLogo = await loadOkBadgeLogo();
                         drawImageTrimmedCentered(
                             ctx,
                             badgeLogo,
                             colCenter(2),
-                            statsY + statsBlockHeight / 2,
-                            colWidth - 8 * scale,
-                            statsBlockHeight - 8 * scale
+                            statsY + 30 * scale,
+                            colWidth - 6 * scale,
+                            56 * scale
                         );
                     } catch (logoErr) {
                         console.warn("Could not load OK badge logo:", logoErr);
@@ -2308,6 +2313,8 @@
                     canvas.width = photoImg.width;
                     canvas.height = photoImg.height;
                     const ctx = canvas.getContext('2d');
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = 'high';
                     ctx.drawImage(photoImg, 0, 0, canvas.width, canvas.height);
 
                     try {
@@ -2375,7 +2382,7 @@
 
                 const reader = new FileReader();
                 reader.onload = async (event) => {
-                    const compressed = await compressBase64(event.target.result, 800, 600);
+                    const compressed = await compressBase64(event.target.result, 1200, 900, 0.92);
                     setSampledPicData(compressed);
                     setCurrentCar(prev => ({ ...prev, image: compressed }));
                     showNotification("Optimized front cover uploaded! Tap cover to extract paints.");
