@@ -687,6 +687,53 @@
             return cachedBadgeLogoImgPromise;
         };
 
+        // Finds the tight bounding box of an image's actually-visible (non
+        // fully-transparent) pixels, cached on the image object itself. Logo
+        // PNGs often have uneven blank margins baked in, which throws off both
+        // centering and perceived size if you just use the raw image bounds --
+        // this crops to what's actually drawn instead.
+        const getTrimmedImageBounds = (img) => {
+            if (img._trimmedBounds) return img._trimmedBounds;
+            try {
+                const c = document.createElement('canvas');
+                c.width = img.width;
+                c.height = img.height;
+                const cctx = c.getContext('2d');
+                cctx.drawImage(img, 0, 0);
+                const { data } = cctx.getImageData(0, 0, c.width, c.height);
+                let minX = c.width, minY = c.height, maxX = -1, maxY = -1;
+                for (let y = 0; y < c.height; y++) {
+                    for (let x = 0; x < c.width; x++) {
+                        const alpha = data[(y * c.width + x) * 4 + 3];
+                        if (alpha > 10) {
+                            if (x < minX) minX = x;
+                            if (x > maxX) maxX = x;
+                            if (y < minY) minY = y;
+                            if (y > maxY) maxY = y;
+                        }
+                    }
+                }
+                if (maxX < 0) {
+                    img._trimmedBounds = { sx: 0, sy: 0, sw: img.width, sh: img.height };
+                } else {
+                    img._trimmedBounds = { sx: minX, sy: minY, sw: (maxX - minX + 1), sh: (maxY - minY + 1) };
+                }
+            } catch (e) {
+                img._trimmedBounds = { sx: 0, sy: 0, sw: img.width, sh: img.height };
+            }
+            return img._trimmedBounds;
+        };
+
+        // Draws an image cropped to its trimmed (visible-content) bounds, fit
+        // and centered inside the given target box.
+        const drawImageTrimmedCentered = (ctx, img, targetCenterX, targetCenterY, maxWidth, maxHeight) => {
+            const tb = getTrimmedImageBounds(img);
+            const ratio = Math.min(maxWidth / tb.sw, maxHeight / tb.sh);
+            const dw = tb.sw * ratio;
+            const dh = tb.sh * ratio;
+            ctx.drawImage(img, tb.sx, tb.sy, tb.sw, tb.sh, targetCenterX - dw / 2, targetCenterY - dh / 2, dw, dh);
+        };
+
         // Draws the transparent OK logo with a clean white outline hugging its
         // silhouette -- used as a corner watermark on Photo Album exports. The
         // outline is built by stamping the shape (recolored solid white) at
@@ -1396,6 +1443,34 @@
                 return { bg: 'rgba(148, 163, 184, 0.15)', text: '#94a3b8', border: 'rgba(148, 163, 184, 0.3)' };
             };
 
+            // A broad set of common color names (not just the automotive-themed
+            // shortlist above) so typing a plain word like "teal" or "maroon"
+            // resolves to a real color instead of falling through to the gray
+            // default. This was the actual cause of "typing a name gives me
+            // gray, only hex works" -- unregistered names had nowhere to
+            // resolve to.
+            const COMMON_COLOR_NAMES = {
+                red: [220, 38, 38], crimson: [200, 30, 50], scarlet: [220, 20, 20],
+                maroon: [128, 0, 0], burgundy: [128, 0, 32], rose: [225, 100, 130],
+                pink: [236, 72, 153], magenta: [217, 70, 239], fuchsia: [217, 70, 239],
+                orange: [220, 85, 12], amber: [217, 119, 6], tangerine: [235, 110, 20],
+                yellow: [220, 170, 12], gold: [212, 175, 55], mustard: [200, 164, 40],
+                lime: [132, 204, 22], olive: [107, 114, 30],
+                green: [30, 160, 70], emerald: [16, 160, 90], forest: [34, 90, 34],
+                mint: [80, 200, 150], jade: [0, 168, 107], teal: [13, 148, 136],
+                cyan: [6, 182, 212], turquoise: [45, 190, 190], aqua: [6, 182, 212],
+                blue: [30, 80, 210], navy: [20, 40, 110], cobalt: [30, 80, 190],
+                cerulean: [42, 130, 200], azure: [0, 127, 255], sky: [56, 160, 235],
+                skyblue: [56, 160, 235], babyblue: [137, 207, 240], indigo: [67, 56, 202],
+                purple: [150, 35, 220], violet: [139, 92, 246], lavender: [180, 160, 230],
+                lilac: [200, 162, 220], plum: [140, 60, 140],
+                brown: [110, 70, 40], tan: [180, 150, 110], beige: [200, 185, 155],
+                chocolate: [90, 55, 25], bronze: [140, 100, 50], copper: [170, 100, 60],
+                black: [15, 15, 17], white: [235, 235, 238], silver: [190, 192, 196],
+                gray: [130, 130, 138], grey: [130, 130, 138], charcoal: [55, 58, 64],
+                slate: [90, 100, 115]
+            };
+
             const getDynamicGradient = (colorInput) => {
                 const input = (colorInput || "").toLowerCase().trim();
                 let r = 30, g = 35, b = 45; 
@@ -1431,6 +1506,14 @@
                             b = parseInt(hex[2] + hex[2], 16) || 45;
                         }
                     } catch (e) {}
+                } else {
+                    // Fall back to the broad common-name table before giving up
+                    // and defaulting to gray. Matches "sky blue"/"sky-blue" the
+                    // same as "skyblue" by stripping spaces/dashes.
+                    const normalized = targetColor.replace(/[\s-]+/g, '');
+                    if (COMMON_COLOR_NAMES[normalized]) {
+                        [r, g, b] = COMMON_COLOR_NAMES[normalized];
+                    }
                 }
 
                 return {
@@ -1440,16 +1523,62 @@
                 };
             };
 
+            // ---------------------------------------------------------------------
+            // Color-family bucketing, so the garage color filter matches by actual
+            // visual family (any shade of blue, not just cars literally named
+            // "Blue") instead of a fragile substring match on the color name.
+            // ---------------------------------------------------------------------
+            const rgbToHsl = (r, g, b) => {
+                r /= 255; g /= 255; b /= 255;
+                const max = Math.max(r, g, b), min = Math.min(r, g, b);
+                let h = 0, s = 0;
+                const l = (max + min) / 2;
+                if (max !== min) {
+                    const d = max - min;
+                    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                    switch (max) {
+                        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                        case g: h = (b - r) / d + 2; break;
+                        case b: h = (r - g) / d + 4; break;
+                    }
+                    h /= 6;
+                }
+                return { h: h * 360, s: s * 100, l: l * 100 };
+            };
+
+            const COLOR_FAMILIES = ["Red", "Orange", "Yellow", "Green", "Cyan", "Blue", "Purple", "Pink", "Black", "White", "Gray"];
+
+            const getColorFamily = (colorInput) => {
+                const { rawRGB } = getDynamicGradient(colorInput);
+                const [r, g, b] = rawRGB.split(',').map(s => parseInt(s.trim(), 10));
+                const { h, s, l } = rgbToHsl(r, g, b);
+                if (l < 14) return 'Black';
+                if (l > 90 && s < 15) return 'White';
+                if (s < 14) return 'Gray';
+                if (h < 15 || h >= 345) return 'Red';
+                if (h < 45) return 'Orange';
+                if (h < 70) return 'Yellow';
+                if (h < 165) return 'Green';
+                if (h < 200) return 'Cyan';
+                if (h < 255) return 'Blue';
+                if (h < 300) return 'Purple';
+                return 'Pink';
+            };
+
             const getHexForColorName = (name) => {
                 const map = {
                     "All Colors": "transparent",
-                    "Red": "#ff2a3b",
-                    "Blue": "#0a84ff",
-                    "Green": "#30d158",
+                    "Red": "#dc2626",
+                    "Orange": "#ff9f0a",
                     "Yellow": "#ffd60a",
+                    "Green": "#30d158",
+                    "Cyan": "#06b6d4",
+                    "Blue": "#0a84ff",
                     "Purple": "#bf5af2",
-                    "Gray": "#8e8e93",
-                    "Orange": "#ff9f0a"
+                    "Pink": "#ec4899",
+                    "Black": "#1a1a1a",
+                    "White": "#f0f0f0",
+                    "Gray": "#8e8e93"
                 };
                 return map[name] || "transparent";
             };
@@ -1651,9 +1780,7 @@
 
                     let matchesColor = true;
                     if (colorFilter !== 'All Colors') {
-                        const carColor = (car.color || '').toLowerCase();
-                        const filterColor = colorFilter.toLowerCase();
-                        matchesColor = carColor.includes(filterColor);
+                        matchesColor = car.color ? getColorFamily(car.color) === colorFilter : false;
                     }
 
                     let matchesLevel = true;
@@ -1689,7 +1816,7 @@
 
                     return sortDirection === 'desc' ? (valA < valB ? 1 : -1) : (valA > valB ? 1 : -1);
                 });
-            }, [garage, garageSearch, garageSortBy, sortDirection, showOnlyFavorites, colorFilter, levelFilter, activeServer]);
+            }, [garage, garageSearch, garageSortBy, sortDirection, showOnlyFavorites, colorFilter, levelFilter, activeServer, palette]);
 
             const handleDeleteAll = async () => {
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'okgarage-mini-app';
@@ -1929,7 +2056,7 @@
             const handleSaveCardImage = async (car) => {
                 try {
                     showNotification("Rendering card image...");
-                    const scale = 2; // draw at 2x for a crisp, full-quality export
+                    const scale = 3; // draw at 3x for a crisp, genuinely full-quality export
                     // Matches the live card's actual proportions (roughly square,
                     // not the taller shape used before).
                     const width = 480 * scale;
@@ -2088,14 +2215,10 @@
                     ctx.fillStyle = '#ff453a';
                     ctx.fillText(`$${estimatedSell.toLocaleString()}`, colCenter(3), valueY);
 
-                    // Color swatch: name label on top, circle + color name below
-                    const colorName = (() => {
-                        if (!car.color) return 'Custom';
-                        const match = palette.find(p => p.name.toLowerCase() === car.color.toLowerCase());
-                        return match ? match.name : car.color;
-                    })();
-                    const swatchY = statsY + 34 * scale;
-                    const swatchRadius = 7 * scale;
+                    // Color swatch: just the "COLOR" label + a circle in the
+                    // car's actual color -- no name text underneath anymore.
+                    const swatchY = statsY + 40 * scale;
+                    const swatchRadius = 10 * scale;
                     ctx.beginPath();
                     ctx.arc(colCenter(4), swatchY, swatchRadius, 0, Math.PI * 2);
                     ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
@@ -2103,22 +2226,21 @@
                     ctx.strokeStyle = 'rgba(255,255,255,0.35)';
                     ctx.lineWidth = 1 * scale;
                     ctx.stroke();
-                    ctx.fillStyle = '#ffffff';
-                    ctx.font = `600 ${8.5 * scale}px sans-serif`;
-                    let displayColorName = colorName;
-                    while (ctx.measureText(displayColorName).width > colWidth - 6 * scale && displayColorName.length > 3) {
-                        displayColorName = displayColorName.slice(0, -1);
-                    }
-                    if (displayColorName !== colorName) displayColorName = displayColorName.trim() + '…';
-                    ctx.fillText(displayColorName, colCenter(4), swatchY + 18 * scale);
 
-                    // Logo badge (self-contained artwork, drawn as-is, no effects)
+                    // Logo badge (self-contained artwork, drawn as-is, no color/
+                    // opacity effects). Cropped to its actual visible content
+                    // first so it's genuinely centered in its column and can be
+                    // sized generously without empty padding eating into it.
                     try {
                         const badgeLogo = await loadOkBadgeLogo();
-                        const badgeSize = 44 * scale;
-                        const bw = badgeSize;
-                        const bh = badgeSize * (badgeLogo.height / badgeLogo.width);
-                        ctx.drawImage(badgeLogo, colCenter(2) - bw / 2, statsY + (statsBlockHeight - bh) / 2 - 4 * scale, bw, bh);
+                        drawImageTrimmedCentered(
+                            ctx,
+                            badgeLogo,
+                            colCenter(2),
+                            statsY + statsBlockHeight / 2,
+                            colWidth - 8 * scale,
+                            statsBlockHeight - 8 * scale
+                        );
                     } catch (logoErr) {
                         console.warn("Could not load OK badge logo:", logoErr);
                         showNotification("Card saved, but the logo couldn't load (check your connection).");
@@ -2189,11 +2311,22 @@
                     ctx.drawImage(photoImg, 0, 0, canvas.width, canvas.height);
 
                     try {
-                        const logo = await loadOkLogo();
-                        drawOkWatermark(ctx, canvas.width, canvas.height, logo, { sizeRatio: 0.08, alpha: 1, marginRatio: 0.03 });
+                        const badgeLogo = await loadOkBadgeLogo();
+                        const tb = getTrimmedImageBounds(badgeLogo);
+                        const targetWidth = Math.round(canvas.width * 0.1);
+                        const targetHeight = Math.round(targetWidth * (tb.sh / tb.sw));
+                        const margin = Math.round(canvas.width * 0.03);
+                        drawImageTrimmedCentered(
+                            ctx,
+                            badgeLogo,
+                            canvas.width - margin - targetWidth / 2,
+                            canvas.height - margin - targetHeight / 2,
+                            targetWidth,
+                            targetHeight
+                        );
                     } catch (logoErr) {
-                        console.warn("Could not load OK logo watermark:", logoErr);
-                        showNotification("Photo saved, but the watermark couldn't load (check your connection).");
+                        console.warn("Could not load OK badge logo:", logoErr);
+                        showNotification("Photo saved, but the logo couldn't load (check your connection).");
                     }
 
                     const filename = `${sanitizeFileNamePart(car.year)}_${sanitizeFileNamePart(car.brand)}_${sanitizeFileNamePart(car.modelName)}_photo_${idx + 1}.png`;
@@ -2683,7 +2816,7 @@
                                             
                                             {isColorDropdownOpen && (
                                                 <div className="absolute right-0 mt-2 bg-[#18181c] border border-white/10 rounded-xl p-1 w-40 shadow-[0_12px_32px_rgba(0,0,0,0.6)] z-50 flex flex-col dropdown-active">
-                                                    {["All Colors", "Red", "Blue", "Green", "Yellow", "Purple", "Gray", "Orange"].map(color => (
+                                                    {["All Colors", ...COLOR_FAMILIES].map(color => (
                                                         <button
                                                             key={color}
                                                             onClick={() => {
