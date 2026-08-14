@@ -87,6 +87,30 @@
         .dropdown-active {
             animation: dropdownEntrance 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
+
+        /* Garage loading screen */
+        @keyframes roadScroll {
+            0% { background-position-x: 0px; }
+            100% { background-position-x: -80px; }
+        }
+        .loading-road {
+            background-image: repeating-linear-gradient(90deg, rgba(255,255,255,0.4) 0px, rgba(255,255,255,0.4) 28px, transparent 28px, transparent 56px);
+            animation: roadScroll 0.5s linear infinite;
+        }
+        @keyframes carBob {
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            50% { transform: translateY(-3px) rotate(-1deg); }
+        }
+        .loading-car-icon {
+            animation: carBob 0.45s ease-in-out infinite;
+        }
+        @keyframes loadingFadeOut {
+            0% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+        .loading-screen-exit {
+            animation: loadingFadeOut 0.4s ease-out forwards;
+        }
     </style>
 </head>
 <body>
@@ -930,6 +954,7 @@
 
             const [garage, setGarage] = useState([]);
             const [isInitialized, setIsInitialized] = useState(false);
+            const [loadingReveal, setLoadingReveal] = useState({ show: true, loaded: 0, total: 0, exiting: false });
             const [cloudSavingActive, setCloudSavingActive] = useState(false);
 
             // Theme context states
@@ -1009,6 +1034,35 @@
             const serverFilterRefs = useRef({});
             const [serverFilterPillStyle, setServerFilterPillStyle] = useState({ left: 0, width: 0 });
 
+            // Animates the garage loading screen's counter/progress from 0 up
+            // to the actual number of vehicles being loaded, so the "N / total"
+            // readout and the car icon riding the progress bar are always
+            // showing real data, not a generic spinner.
+            const runLoadingReveal = (total) => {
+                return new Promise((resolve) => {
+                    if (total <= 0) {
+                        setLoadingReveal({ show: true, loaded: 0, total: 0 });
+                        setTimeout(resolve, 350);
+                        return;
+                    }
+                    const duration = Math.min(2200, 450 + total * 22);
+                    const start = performance.now();
+                    const tick = (now) => {
+                        const elapsed = now - start;
+                        const progress = Math.min(1, elapsed / duration);
+                        const loaded = Math.floor(progress * total);
+                        setLoadingReveal({ show: true, loaded, total });
+                        if (progress < 1) {
+                            requestAnimationFrame(tick);
+                        } else {
+                            setLoadingReveal({ show: true, loaded: total, total });
+                            setTimeout(resolve, 220);
+                        }
+                    };
+                    requestAnimationFrame(tick);
+                });
+            };
+
             useEffect(() => {
                 const initSync = async () => {
                     const appId = typeof __app_id !== 'undefined' ? __app_id : 'okgarage-mini-app';
@@ -1036,13 +1090,16 @@
                                     const userId = user.uid;
                                     const q = query(collection(db, 'artifacts', appId, 'users', userId, 'vehicles'));
                                     
-                                    onSnapshot(q, (snapshot) => {
+                                    onSnapshot(q, async (snapshot) => {
                                         const cars = [];
                                         snapshot.forEach(doc => {
                                             cars.push({ id: doc.id, ...doc.data() });
                                         });
+                                        await runLoadingReveal(cars.length);
                                         setGarage(cars);
                                         setIsInitialized(true);
+                                        setLoadingReveal(prev => ({ ...prev, exiting: true }));
+                                        setTimeout(() => setLoadingReveal(prev => ({ ...prev, show: false, exiting: false })), 400);
                                     }, (err) => {
                                         console.error("Cloud snapshot fail:", err);
                                         loadLocalData();
@@ -1127,6 +1184,7 @@
                     }
 
                     if (loadedGarage !== null) {
+                        await runLoadingReveal(loadedGarage.length);
                         setGarage(loadedGarage);
                     } else {
                         // Base template items
@@ -1148,6 +1206,7 @@
                                 images: []
                             }
                         ];
+                        await runLoadingReveal(defaults.length);
                         setGarage(defaults.map(car => ({
                             ...car,
                             loreMap: {
@@ -1160,6 +1219,8 @@
                         })));
                     }
                     setIsInitialized(true);
+                    setLoadingReveal(prev => ({ ...prev, exiting: true }));
+                    setTimeout(() => setLoadingReveal(prev => ({ ...prev, show: false, exiting: false })), 400);
                 };
 
                 initSync();
@@ -1951,7 +2012,7 @@
                                             // quality (this is where people zoom in on the
                                             // in-game shots), so use a much larger cap and
                                             // higher JPEG quality than the small card cover.
-                                            return await compressBase64(img, 1920, 1440, 0.95);
+                                            return await compressBase64(img, 3840, 2880, 0.97);
                                         }
                                         return img;
                                     }));
@@ -1992,7 +2053,7 @@
                         reader.onloadend = async () => {
                             // Photo Album quality: keep these close to full resolution
                             // since they're meant to be viewed large, not just as thumbnails.
-                            const compressed = await compressBase64(reader.result, 1920, 1440, 0.95);
+                            const compressed = await compressBase64(reader.result, 3840, 2880, 0.97);
                             newImages.push(compressed);
                             resolve();
                         };
@@ -2057,10 +2118,11 @@
                 try {
                     showNotification("Rendering card image...");
                     const scale = 3; // draw at 3x for a crisp, genuinely full-quality export
-                    // Matches the live card's actual proportions (roughly square,
-                    // not the taller shape used before).
+                    // Matches the live card's actual proportions, with extra
+                    // top/bottom breathing room so nothing feels cramped against
+                    // the edges.
                     const width = 480 * scale;
-                    const height = 522 * scale;
+                    const height = 580 * scale;
                     const canvas = document.createElement('canvas');
                     canvas.width = width;
                     canvas.height = height;
@@ -2099,18 +2161,19 @@
                     ctx.fillStyle = bgGradient;
                     ctx.fillRect(0, 0, width, height);
 
+                    const topPad = pad + 18 * scale; // extra top breathing room
                     // Year / Model header row
                     ctx.fillStyle = 'rgba(255,255,255,0.4)';
                     ctx.font = `bold ${9 * scale}px sans-serif`;
-                    ctx.fillText('YEAR', pad, pad + 10 * scale);
+                    ctx.fillText('YEAR', pad, topPad + 10 * scale);
                     ctx.fillStyle = '#ffffff';
                     ctx.font = `bold ${14 * scale}px sans-serif`;
-                    ctx.fillText(String(car.year || ''), pad, pad + 28 * scale);
+                    ctx.fillText(String(car.year || ''), pad, topPad + 28 * scale);
 
                     const modelX = pad + 70 * scale;
                     ctx.fillStyle = 'rgba(255,255,255,0.4)';
                     ctx.font = `bold ${9 * scale}px sans-serif`;
-                    ctx.fillText('MODEL', modelX, pad + 10 * scale);
+                    ctx.fillText('MODEL', modelX, topPad + 10 * scale);
                     ctx.fillStyle = '#ffffff';
                     ctx.font = `bold ${14 * scale}px sans-serif`;
                     const modelText = `${car.brand || ''} ${car.modelName || ''}`.trim();
@@ -2120,7 +2183,7 @@
                         displayModel = displayModel.slice(0, -1);
                     }
                     if (displayModel !== modelText) displayModel = displayModel.trim() + '…';
-                    ctx.fillText(displayModel, modelX, pad + 28 * scale);
+                    ctx.fillText(displayModel, modelX, topPad + 28 * scale);
 
                     // Level badge, right-aligned
                     const resolvedLevel = getCarLevel(car);
@@ -2129,7 +2192,7 @@
                     ctx.font = `bold ${9 * scale}px sans-serif`;
                     const levelLabelWidth = ctx.measureText('LEVEL').width;
                     ctx.fillStyle = 'rgba(255,255,255,0.4)';
-                    ctx.fillText('LEVEL', width - pad - levelLabelWidth, pad + 10 * scale);
+                    ctx.fillText('LEVEL', width - pad - levelLabelWidth, topPad + 10 * scale);
 
                     ctx.font = `bold ${10 * scale}px sans-serif`;
                     const levelTextWidth = ctx.measureText(levelText).width;
@@ -2137,7 +2200,7 @@
                     const badgeWidth = levelTextWidth + badgePadX * 2;
                     const badgeHeight = 20 * scale;
                     const badgeX = width - pad - badgeWidth;
-                    const badgeY = pad + 14 * scale;
+                    const badgeY = topPad + 14 * scale;
                     traceRoundedRectPath(ctx, badgeX, badgeY, badgeWidth, badgeHeight, 5 * scale);
                     ctx.fillStyle = badgeStyles.bg;
                     ctx.fill();
@@ -2150,7 +2213,7 @@
                     ctx.textAlign = 'left';
 
                     // Trim line
-                    const headerBottom = pad + 48 * scale;
+                    const headerBottom = topPad + 48 * scale;
                     if (car.trim) {
                         ctx.fillStyle = 'rgba(255,255,255,0.6)';
                         ctx.font = `600 ${11 * scale}px sans-serif`;
@@ -2160,20 +2223,23 @@
                     // Bottom block (divider + stats row + tags) is pinned to the
                     // bottom of the card, same as the site's flexbox layout
                     // (header at top, image fills the middle, stats+tags at the
-                    // very bottom).
+                    // very bottom), with extra bottom breathing room.
+                    const bottomPad = pad + 18 * scale;
                     const tagsRowHeight = 26 * scale;
                     const statsBlockHeight = 96 * scale;
                     const bottomBlockHeight = statsBlockHeight + tagsRowHeight;
-                    const statsY = height - pad - bottomBlockHeight;
+                    const statsY = height - bottomPad - bottomBlockHeight;
 
                     // Car photo centered in the flexible space between the header
-                    // and the bottom block.
-                    const imgBoxTop = headerBottom + 16 * scale;
-                    const imgBoxHeight = statsY - imgBoxTop - 16 * scale;
+                    // and the bottom block, with extra side/vertical margin so it
+                    // doesn't sit right against the edges.
+                    const imgSideMargin = 26 * scale;
+                    const imgBoxTop = headerBottom + 20 * scale;
+                    const imgBoxHeight = statsY - imgBoxTop - 20 * scale;
                     if (car.image && imgBoxHeight > 0) {
                         try {
                             const carImg = await loadImageEl(car.image);
-                            const maxW = width - pad * 2;
+                            const maxW = width - pad * 2 - imgSideMargin * 2;
                             const maxH = imgBoxHeight;
                             let dw = carImg.width, dh = carImg.height;
                             const ratio = Math.min(maxW / dw, maxH / dh);
@@ -2243,8 +2309,8 @@
                             badgeLogo,
                             colCenter(2),
                             statsY + 30 * scale,
-                            colWidth - 6 * scale,
-                            56 * scale
+                            colWidth - 20 * scale,
+                            42 * scale
                         );
                     } catch (logoErr) {
                         console.warn("Could not load OK badge logo:", logoErr);
@@ -2320,7 +2386,7 @@
                     try {
                         const badgeLogo = await loadOkBadgeLogo();
                         const tb = getTrimmedImageBounds(badgeLogo);
-                        const targetWidth = Math.round(canvas.width * 0.1);
+                        const targetWidth = Math.round(canvas.width * 0.07);
                         const targetHeight = Math.round(targetWidth * (tb.sh / tb.sw));
                         const margin = Math.round(canvas.width * 0.03);
                         drawImageTrimmedCentered(
@@ -2482,7 +2548,44 @@
 
             return (
                 <div className="w-full h-screen bg-[#07080b] text-white flex flex-col relative select-none overflow-hidden">
-                    
+
+                    {loadingReveal.show && (
+                        <div className={`fixed inset-0 z-[300] bg-[#07080b] flex flex-col items-center justify-center overflow-hidden ${loadingReveal.exiting ? 'loading-screen-exit' : ''}`}>
+                            <div className="absolute inset-0 opacity-50" style={{ background: 'radial-gradient(circle at 50% 38%, rgba(16,185,129,0.16) 0%, transparent 60%)' }} />
+
+                            <div className="relative z-10 flex flex-col items-center gap-7 px-6 w-full max-w-sm">
+                                <div className="text-center">
+                                    <div className="text-white text-lg font-black tracking-tight mb-1.5 font-sans">Loading your garage</div>
+                                    <div className="text-emerald-400/80 text-xs font-bold uppercase tracking-widest font-sans">
+                                        {loadingReveal.total > 0
+                                            ? `${loadingReveal.loaded} / ${loadingReveal.total} vehicles`
+                                            : 'Getting things ready'}
+                                    </div>
+                                </div>
+
+                                <div className="w-full relative h-1.5 rounded-full bg-white/[0.06] overflow-visible">
+                                    <div
+                                        className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-[width] duration-150 ease-linear"
+                                        style={{ width: `${loadingReveal.total > 0 ? (loadingReveal.loaded / loadingReveal.total) * 100 : 35}%` }}
+                                    />
+                                    <div
+                                        className="absolute top-1/2 loading-car-icon transition-[left] duration-150 ease-linear"
+                                        style={{ left: `calc(${loadingReveal.total > 0 ? (loadingReveal.loaded / loadingReveal.total) * 100 : 35}% - 11px)`, transform: 'translateY(-50%)' }}
+                                    >
+                                        <svg width="24" height="15" viewBox="0 0 24 15" fill="none">
+                                            <path d="M2 10.5 L3.8 5.8 Q4.3 4.2 6.4 4.2 H15.6 Q17.7 4.2 18.2 5.8 L20 10.5" stroke="#0a0a0c" strokeWidth="1" fill="#34d399" strokeLinejoin="round" />
+                                            <rect x="0.5" y="9.5" width="23" height="2.8" rx="1.4" fill="#0a0a0c" />
+                                            <circle cx="6" cy="13" r="2.1" fill="#0a0a0c" stroke="#34d399" strokeWidth="0.8" />
+                                            <circle cx="18" cy="13" r="2.1" fill="#0a0a0c" stroke="#34d399" strokeWidth="0.8" />
+                                        </svg>
+                                    </div>
+                                </div>
+
+                                <div className="w-full h-1 rounded-full loading-road opacity-25" />
+                            </div>
+                        </div>
+                    )}
+
                     {toast.visible && (
                         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[150] flex items-center gap-3 px-6 py-3 rounded-full bg-[#181a20]/95 border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.85)] transition-all">
                             <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
