@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>okGARAGE - mini</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     
     <!-- React and Tailwind Frameworks -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin></script>
@@ -13,6 +14,14 @@
     <script src="https://cdn.tailwindcss.com"></script>
 
     <style>
+        html {
+            scroll-behavior: smooth;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+            line-height: 1;
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Inter", sans-serif;
             background-color: #07080b;
@@ -88,21 +97,20 @@
             animation: dropdownEntrance 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
 
-        /* Garage loading screen */
-        @keyframes roadScroll {
-            0% { background-position-x: 0px; }
-            100% { background-position-x: -80px; }
+        /* Garage loading screen -- simple, smooth spinner + pulse */
+        @keyframes spinSmooth {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
-        .loading-road {
-            background-image: repeating-linear-gradient(90deg, rgba(255,255,255,0.4) 0px, rgba(255,255,255,0.4) 28px, transparent 28px, transparent 56px);
-            animation: roadScroll 0.5s linear infinite;
+        .loading-spin-smooth {
+            animation: spinSmooth 1.1s cubic-bezier(0.65, 0, 0.35, 1) infinite;
         }
-        @keyframes carBob {
-            0%, 100% { transform: translateY(0) rotate(0deg); }
-            50% { transform: translateY(-3px) rotate(-1deg); }
+        @keyframes pulseDot {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(0.55); opacity: 0.5; }
         }
-        .loading-car-icon {
-            animation: carBob 0.45s ease-in-out infinite;
+        .loading-pulse-dot {
+            animation: pulseDot 1.1s ease-in-out infinite;
         }
         @keyframes loadingFadeOut {
             0% { opacity: 1; }
@@ -514,6 +522,47 @@
         const BANNED_DATABASES = {
             SGR: BANNED_DATABASE_SGR,
             GVRPV: BANNED_DATABASE_GVRPV
+        };
+
+        // Prep for the future gambling/rail-mission system: these are the real
+        // in-game categories, so a car's Type/Pass are logged consistently now
+        // instead of freeform text that would need cleaning up later.
+        const CAR_TYPES = [
+            "Sedan", "Ute", "Coupe", "Hatchback", "Emergency", "Limousine",
+            "SUV", "Minivan", "Truck", "Convertible", "Van", "Wagon",
+            "Motorhome", "Other"
+        ];
+        const CAR_PASSES = [
+            "No Pass", "Luxury", "Public Services", "Sports", "Zero Emissions", "Classic"
+        ];
+        const CAR_FUEL_TYPES = ["Gasoline", "Diesel", "Electric", "Hybrid"];
+        // Greenville only ever combines transmissions in these four ways.
+        const CAR_TRANSMISSIONS = ["Auto", "Auto + Semi", "Auto + Semi + Manual", "Auto + Manual"];
+
+        // Material Symbols icon name for each spec field, used in the
+        // Performance Specs panel and the add/edit form.
+        const SPEC_ICONS = {
+            type: "directions_car",
+            pass: "local_activity",
+            zeroToSixty: "speed",
+            safetyRating: "shield",
+            canTow: "auto_towing",
+            hasCruiseControl: "readiness_score",
+            weight: "weight",
+            seats: "airline_seat_recline_extra",
+            country: "globe_location_pin",
+            engineType: "build_circle",
+            fuel: "local_gas_station",
+            transmission: "manufacturing",
+            favorite: "favorite",
+            topSpeed: "avg_pace",
+            stopwatch: "avg_time",
+            buyPrice: "attach_money",
+            sellPrice: "sell",
+            horsepower: "bolt_boost",
+            miles: "timeline",
+            permbanned: "block",
+            back: "arrow_forward_ios"
         };
 
         const compressBase64 = (base64Str, maxWidth = 640, maxHeight = 480, quality = 0.85) => {
@@ -1577,6 +1626,18 @@
                     }
                 }
 
+                // Ensure very dark colors (black/near-black cars) still show a
+                // visible fade against the card's own near-black (7,8,11)
+                // background -- without this, "Black" cars had basically no
+                // contrast and looked like they had no glow behind them at all.
+                const maxChannel = Math.max(r, g, b);
+                if (maxChannel < 55) {
+                    const boost = maxChannel === 0 ? 55 : 55 / maxChannel;
+                    r = Math.min(255, Math.round(r * boost + 22));
+                    g = Math.min(255, Math.round(g * boost + 22));
+                    b = Math.min(255, Math.round(b * boost + 22));
+                }
+
                 return {
                     gradient: `radial-gradient(circle at 50% 50%, rgba(${r}, ${g}, ${b}, 0.58) 0%, rgba(${r}, ${g}, ${b}, 0.30) 22%, rgba(${r}, ${g}, ${b}, 0.08) 55%, rgba(7, 8, 11, 1) 85%)`,
                     border: `rgba(${r}, ${g}, ${b}, 0.25)`,
@@ -1676,13 +1737,24 @@
                     modelName: '',
                     trim: '',
                     color: 'Gray',
-                    type: 'Sport',
+                    type: 'Sedan',
+                    pass: 'No Pass',
                     cost: '',
                     miles: '',
                     horsepower: '450',
                     favorite: false,
                     topSpeed: '',
-                    engineType: 'Internal Combustion',
+                    zeroToSixty: '',
+                    safetyRating: '',
+                    canTow: false,
+                    hasCruiseControl: false,
+                    hasDrivingAssist: false,
+                    weight: '',
+                    seats: '',
+                    country: '',
+                    engineType: '',
+                    fuel: 'Gasoline',
+                    transmission: 'Auto',
                     level: 'Level 0',
                     tags: [],
                     images: []
@@ -1709,7 +1781,20 @@
                     ...car, 
                     level: resolvedLevel,
                     tags: car.tags || [], 
-                    images: car.images || [] 
+                    images: car.images || [],
+                    type: car.type || 'Sedan',
+                    pass: car.pass || 'No Pass',
+                    zeroToSixty: car.zeroToSixty || '',
+                    safetyRating: car.safetyRating || '',
+                    canTow: car.canTow || false,
+                    hasCruiseControl: car.hasCruiseControl || false,
+                    hasDrivingAssist: car.hasDrivingAssist || false,
+                    weight: car.weight || '',
+                    seats: car.seats || '',
+                    country: car.country || '',
+                    engineType: car.engineType || '',
+                    fuel: car.fuel || 'Gasoline',
+                    transmission: car.transmission || 'Auto'
                 });
                 
                 const matchInPalette = palette.find(p => p.name.toLowerCase() === (car.color || '').toLowerCase());
@@ -1739,6 +1824,10 @@
                     miles: Number(currentCar.miles) || 0,
                     horsepower: Number(currentCar.horsepower) || 300,
                     topSpeed: Number(currentCar.topSpeed) || 0,
+                    zeroToSixty: currentCar.zeroToSixty === '' ? '' : Number(currentCar.zeroToSixty) || 0,
+                    safetyRating: currentCar.safetyRating === '' ? '' : Number(currentCar.safetyRating) || 0,
+                    weight: currentCar.weight === '' ? '' : Number(currentCar.weight) || 0,
+                    seats: currentCar.seats === '' ? '' : Number(currentCar.seats) || 0,
                     level: currentCar.level || 'Level 0',
                     image: compressedCover,
                     tags: currentCar.tags || [],
@@ -2221,12 +2310,11 @@
                     }
 
                     // Bottom block (divider + stats row + tags) is pinned to the
-                    // bottom of the card, same as the site's flexbox layout
-                    // (header at top, image fills the middle, stats+tags at the
-                    // very bottom), with extra bottom breathing room.
-                    const bottomPad = pad + 18 * scale;
-                    const tagsRowHeight = 26 * scale;
-                    const statsBlockHeight = 96 * scale;
+                    // bottom of the card, tightened up and pulled closer to the
+                    // bottom edge than before.
+                    const bottomPad = pad + 8 * scale;
+                    const tagsRowHeight = 22 * scale;
+                    const statsBlockHeight = 78 * scale;
                     const bottomBlockHeight = statsBlockHeight + tagsRowHeight;
                     const statsY = height - bottomPad - bottomBlockHeight;
 
@@ -2260,12 +2348,11 @@
                     ctx.lineTo(width - pad, statsY);
                     ctx.stroke();
 
-                    // 5-column stats row: Top Speed | HP | Logo badge | Sell Price | Color
+                    // 5-column stats row: Top Speed | HP | Logo badge | Buy Price | Color
                     const colWidth = (width - pad * 2) / 5;
                     const colCenter = (i) => pad + colWidth * (i + 0.5);
-                    const labelY = statsY + 20 * scale;
-                    const valueY = statsY + 42 * scale;
-                    const estimatedSell = calculateEstimatedSellPrice(car.cost, car.miles);
+                    const labelY = statsY + 18 * scale;
+                    const valueY = statsY + 38 * scale;
 
                     ctx.textAlign = 'center';
 
@@ -2273,20 +2360,20 @@
                     ctx.font = `bold ${8.5 * scale}px sans-serif`;
                     ctx.fillText('TOP SPEED', colCenter(0), labelY);
                     ctx.fillText('HP', colCenter(1), labelY);
-                    ctx.fillText('SELL PRICE', colCenter(3), labelY);
+                    ctx.fillText('BUY PRICE', colCenter(3), labelY);
                     ctx.fillText('COLOR', colCenter(4), labelY);
 
                     ctx.font = `bold ${12 * scale}px sans-serif`;
                     ctx.fillStyle = '#ffffff';
                     ctx.fillText(`${car.topSpeed || 0} mph`, colCenter(0), valueY);
                     ctx.fillText(`${car.horsepower || 0} HP`, colCenter(1), valueY);
-                    ctx.fillStyle = '#ff453a';
-                    ctx.fillText(`$${estimatedSell.toLocaleString()}`, colCenter(3), valueY);
+                    ctx.fillStyle = '#30d158';
+                    ctx.fillText(`$${Number(car.cost || 0).toLocaleString()}`, colCenter(3), valueY);
 
                     // Color swatch: just the "COLOR" label + a circle in the
                     // car's actual color -- no name text underneath anymore.
-                    const swatchY = statsY + 40 * scale;
-                    const swatchRadius = 10 * scale;
+                    const swatchY = statsY + 36 * scale;
+                    const swatchRadius = 9 * scale;
                     ctx.beginPath();
                     ctx.arc(colCenter(4), swatchY, swatchRadius, 0, Math.PI * 2);
                     ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
@@ -2299,18 +2386,15 @@
                     // opacity effects). Cropped to its actual visible content
                     // first so it's genuinely centered in its column and can be
                     // sized generously without empty padding eating into it.
-                    // Vertically aligned with the label/value text rows (not the
-                    // full stats block, which has extra padding below before the
-                    // tags row) -- that's what made it look off-center/too low.
                     try {
                         const badgeLogo = await loadOkBadgeLogo();
                         drawImageTrimmedCentered(
                             ctx,
                             badgeLogo,
                             colCenter(2),
-                            statsY + 30 * scale,
+                            statsY + 27 * scale,
                             colWidth - 20 * scale,
-                            42 * scale
+                            36 * scale
                         );
                     } catch (logoErr) {
                         console.warn("Could not load OK badge logo:", logoErr);
@@ -2551,11 +2635,17 @@
 
                     {loadingReveal.show && (
                         <div className={`fixed inset-0 z-[300] bg-[#07080b] flex flex-col items-center justify-center overflow-hidden ${loadingReveal.exiting ? 'loading-screen-exit' : ''}`}>
-                            <div className="absolute inset-0 opacity-50" style={{ background: 'radial-gradient(circle at 50% 38%, rgba(16,185,129,0.16) 0%, transparent 60%)' }} />
+                            <div className="absolute inset-0 opacity-50" style={{ background: 'radial-gradient(circle at 50% 38%, rgba(16,185,129,0.14) 0%, transparent 60%)' }} />
 
-                            <div className="relative z-10 flex flex-col items-center gap-7 px-6 w-full max-w-sm">
+                            <div className="relative z-10 flex flex-col items-center gap-8 px-6 w-full max-w-xs">
+                                <div className="relative w-14 h-14 flex items-center justify-center">
+                                    <div className="absolute inset-0 rounded-full border-2 border-emerald-400/20" />
+                                    <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-emerald-400 loading-spin-smooth" />
+                                    <div className="w-2 h-2 rounded-full bg-emerald-400 loading-pulse-dot" />
+                                </div>
+
                                 <div className="text-center">
-                                    <div className="text-white text-lg font-black tracking-tight mb-1.5 font-sans">Loading your garage</div>
+                                    <div className="text-white text-base font-black tracking-tight mb-1.5 font-sans">Loading your garage</div>
                                     <div className="text-emerald-400/80 text-xs font-bold uppercase tracking-widest font-sans">
                                         {loadingReveal.total > 0
                                             ? `${loadingReveal.loaded} / ${loadingReveal.total} vehicles`
@@ -2563,25 +2653,12 @@
                                     </div>
                                 </div>
 
-                                <div className="w-full relative h-1.5 rounded-full bg-white/[0.06] overflow-visible">
+                                <div className="w-full h-1 rounded-full bg-white/[0.06] overflow-hidden">
                                     <div
-                                        className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-[width] duration-150 ease-linear"
+                                        className="h-full rounded-full bg-emerald-400 transition-[width] duration-500 ease-out"
                                         style={{ width: `${loadingReveal.total > 0 ? (loadingReveal.loaded / loadingReveal.total) * 100 : 35}%` }}
                                     />
-                                    <div
-                                        className="absolute top-1/2 loading-car-icon transition-[left] duration-150 ease-linear"
-                                        style={{ left: `calc(${loadingReveal.total > 0 ? (loadingReveal.loaded / loadingReveal.total) * 100 : 35}% - 11px)`, transform: 'translateY(-50%)' }}
-                                    >
-                                        <svg width="24" height="15" viewBox="0 0 24 15" fill="none">
-                                            <path d="M2 10.5 L3.8 5.8 Q4.3 4.2 6.4 4.2 H15.6 Q17.7 4.2 18.2 5.8 L20 10.5" stroke="#0a0a0c" strokeWidth="1" fill="#34d399" strokeLinejoin="round" />
-                                            <rect x="0.5" y="9.5" width="23" height="2.8" rx="1.4" fill="#0a0a0c" />
-                                            <circle cx="6" cy="13" r="2.1" fill="#0a0a0c" stroke="#34d399" strokeWidth="0.8" />
-                                            <circle cx="18" cy="13" r="2.1" fill="#0a0a0c" stroke="#34d399" strokeWidth="0.8" />
-                                        </svg>
-                                    </div>
                                 </div>
-
-                                <div className="w-full h-1 rounded-full loading-road opacity-25" />
                             </div>
                         </div>
                     )}
@@ -2732,7 +2809,7 @@
                                                                         style={{ backgroundColor: badgeStyles.bg, color: badgeStyles.text, borderColor: badgeStyles.border, boxShadow: badgeStyles.glow || 'none' }}
                                                                         className="text-[10px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider"
                                                                     >
-                                                                        {resolvedLevel === 'Level 0' ? '0' : resolvedLevel}
+                                                                        {resolvedLevel === 'Permbanned' ? <span className="material-symbols-outlined text-[12px] leading-none align-middle">block</span> : (resolvedLevel === 'Level 0' ? '0' : resolvedLevel)}
                                                                     </span>
                                                                 </div>
                                                             </div>
@@ -2756,22 +2833,22 @@
                                                         </div>
 
                                                         <div className="absolute bottom-5 left-5 right-5 z-10 flex flex-col gap-2 bg-transparent">
-                                                            <div className="grid grid-cols-2 gap-x-2 pt-1 border-t border-white/[0.04]">
+                                                            <div className="grid grid-cols-4 gap-x-1.5 pt-1 border-t border-white/[0.04]">
                                                                 <div>
-                                                                    <span className="text-[10px] text-white/40 font-bold block mb-0.5">
-                                                                        {isHovered ? 'Horsepower' : 'Top Speed'}
-                                                                    </span>
-                                                                    <span className="text-xs font-bold text-white block">
-                                                                        {isHovered ? `${ownedCar.horsepower} HP` : `${ownedCar.topSpeed} mph`}
-                                                                    </span>
+                                                                    <span className="text-[9px] text-white/40 font-bold block mb-0.5">Top Speed</span>
+                                                                    <span className="text-[11px] font-bold text-white block truncate">{ownedCar.topSpeed} mph</span>
                                                                 </div>
                                                                 <div>
-                                                                    <span className="text-[10px] text-white/40 font-bold block mb-0.5">
-                                                                        {isHovered ? 'Sell Price' : 'Buy Price'}
-                                                                    </span>
-                                                                    <span className={`text-xs font-bold block ${isHovered ? 'text-[#ff453a]' : 'text-[#30d158]'}`}>
-                                                                        {isHovered ? `$${estimatedSell.toLocaleString()}` : `$${ownedCar.cost.toLocaleString()}`}
-                                                                    </span>
+                                                                    <span className="text-[9px] text-white/40 font-bold block mb-0.5">HP</span>
+                                                                    <span className="text-[11px] font-bold text-white block truncate">{ownedCar.horsepower} HP</span>
+                                                                </div>
+                                                                <div>
+                                                                    <span className="text-[9px] text-white/40 font-bold block mb-0.5">Buy Price</span>
+                                                                    <span className="text-[11px] font-bold text-[#30d158] block truncate">${ownedCar.cost.toLocaleString()}</span>
+                                                                </div>
+                                                                <div className="flex flex-col items-start">
+                                                                    <span className="text-[9px] text-white/40 font-bold block mb-0.5">Color</span>
+                                                                    <span className="w-3.5 h-3.5 rounded-full border border-white/30" style={{ backgroundColor: `rgb(${spec.rawRGB})` }} />
                                                                 </div>
                                                             </div>
 
@@ -2818,7 +2895,7 @@
                                                         style={{ backgroundColor: badgeStyles.bg, color: badgeStyles.text, borderColor: badgeStyles.border, boxShadow: badgeStyles.glow || 'none' }}
                                                         className="text-[10px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider shrink-0 font-sans"
                                                     >
-                                                        {resolvedLevel === 'Level 0' ? '0' : resolvedLevel}
+                                                        {resolvedLevel === 'Permbanned' ? <span className="material-symbols-outlined text-[12px] leading-none align-middle">block</span> : (resolvedLevel === 'Level 0' ? '0' : resolvedLevel)}
                                                     </span>
                                                 </div>
                                             );
@@ -2890,13 +2967,13 @@
                                                 onClick={() => { setIsLevelDropdownOpen(!isLevelDropdownOpen); setIsColorDropdownOpen(false); }}
                                                 className="h-9 px-4 rounded-xl bg-[#ffffff]/[0.05] backdrop-blur-xl border border-white/[0.06] text-[11px] font-medium text-white/70 hover:text-white hover:bg-white/10 flex items-center gap-2 transition-all"
                                             >
-                                                <span>Lvl: {levelFilter}</span>
+                                                <span>Lvl: {levelFilter === 'Level 0' ? 'L0' : levelFilter}</span>
                                                 <span className="text-[9px]">▼</span>
                                             </button>
                                             
                                             {isLevelDropdownOpen && (
                                                 <div className="absolute right-0 mt-2 bg-[#18181c] border border-white/10 rounded-xl p-1 w-40 shadow-[0_12px_32px_rgba(0,0,0,0.6)] z-50 flex flex-col dropdown-active">
-                                                    {["All Levels", "Level 0", "L1", "L2", "L3", "L4", "Banned", "Permbanned"].map(lvl => (
+                                                    {["All Levels", "Level 0", "L1", "L2", "L3", "L4", "Permbanned"].map(lvl => (
                                                         <button
                                                             key={lvl}
                                                             onClick={() => {
@@ -2907,7 +2984,7 @@
                                                                 levelFilter === lvl ? "bg-white/10 text-white" : "text-white/60 hover:bg-white/5 hover:text-white"
                                                             }`}
                                                         >
-                                                            {lvl}
+                                                            {lvl === 'Level 0' ? 'L0' : lvl}
                                                         </button>
                                                     ))}
                                                 </div>
@@ -2997,7 +3074,7 @@
                                                                     style={{ backgroundColor: badgeStyles.bg, color: badgeStyles.text, borderColor: badgeStyles.border, boxShadow: badgeStyles.glow || 'none' }}
                                                                     className="text-[10px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider font-sans"
                                                                 >
-                                                                    {resolvedLevel === 'Level 0' ? '0' : resolvedLevel}
+                                                                    {resolvedLevel === 'Permbanned' ? <span className="material-symbols-outlined text-[12px] leading-none align-middle">block</span> : (resolvedLevel === 'Level 0' ? '0' : resolvedLevel)}
                                                                 </span>
                                                             </div>
                                                         </div>
@@ -3021,22 +3098,22 @@
                                                     </div>
 
                                                     <div className="absolute bottom-5 left-5 right-5 z-10 flex flex-col gap-2 bg-transparent">
-                                                        <div className="grid grid-cols-2 gap-x-2 pt-1 border-t border-white/[0.04]">
+                                                        <div className="grid grid-cols-4 gap-x-1.5 pt-1 border-t border-white/[0.04]">
                                                             <div>
-                                                                <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-0.5 font-sans">
-                                                                    {isHovered ? 'Horsepower' : 'Top Speed'}
-                                                                </span>
-                                                                <span className="text-xs font-bold text-white block font-sans">
-                                                                    {isHovered ? `${car.horsepower} HP` : `${car.topSpeed} mph`}
-                                                                </span>
+                                                                <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider block mb-0.5 font-sans">Top Speed</span>
+                                                                <span className="text-[11px] font-bold text-white block font-sans truncate">{car.topSpeed} mph</span>
                                                             </div>
                                                             <div>
-                                                                <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-0.5 font-sans">
-                                                                    {isHovered ? 'Sell Price' : 'Buy Price'}
-                                                                </span>
-                                                                <span className={`text-xs font-bold block font-sans ${isHovered ? 'text-[#ff453a]' : 'text-[#30d158]'}`}>
-                                                                    {isHovered ? `$${estimatedSell.toLocaleString()}` : `$${car.cost.toLocaleString()}`}
-                                                                </span>
+                                                                <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider block mb-0.5 font-sans">HP</span>
+                                                                <span className="text-[11px] font-bold text-white block font-sans truncate">{car.horsepower} HP</span>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider block mb-0.5 font-sans">Buy Price</span>
+                                                                <span className="text-[11px] font-bold text-[#30d158] block font-sans truncate">${car.cost.toLocaleString()}</span>
+                                                            </div>
+                                                            <div className="flex flex-col items-start">
+                                                                <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider block mb-0.5 font-sans">Color</span>
+                                                                <span className="w-3.5 h-3.5 rounded-full border border-white/30" style={{ backgroundColor: `rgb(${spec.rawRGB})` }} />
                                                             </div>
                                                         </div>
 
@@ -3060,7 +3137,7 @@
                                                                 )}
                                                             </div>
                                                             {car.favorite && (
-                                                                <span className="text-[10px] text-[#ffd60a] font-bold animate-pulse">★</span>
+                                                                <span className="material-symbols-outlined text-[13px] text-[#ffd60a] animate-pulse" style={{ fontVariationSettings: "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24" }}>{SPEC_ICONS.favorite}</span>
                                                             )}
                                                         </div>
                                                     </div>
@@ -3120,12 +3197,6 @@
 
                             <header className="w-full px-12 py-6 border-b border-b-white/[0.05] flex justify-between items-center z-10 relative bg-[#07080b]/40 backdrop-blur-md">
                                 <div className="flex items-center gap-4">
-                                    <span 
-                                        style={{ backgroundColor: galleryBadgeStyles.bg, color: galleryBadgeStyles.text, borderColor: galleryBadgeStyles.border, boxShadow: galleryBadgeStyles.glow || 'none' }}
-                                        className="text-xs font-black px-3 py-1 rounded border uppercase tracking-widest font-sans"
-                                    >
-                                        {galleryLevel === 'Level 0' ? '0' : galleryLevel}
-                                    </span>
                                     {/* Symmetrical Header Typography mapping year and model font sizing identically */}
                                     <h3 className="text-2xl font-black font-['Montserrat'] tracking-tight text-white leading-none">
                                         {selectedGalleryCar.year} {selectedGalleryCar.brand} {selectedGalleryCar.modelName}
@@ -3135,20 +3206,26 @@
                                     onClick={handleCloseGallery}
                                     className="h-11 px-5 rounded-full bg-white/5 hover:bg-white/10 text-white/80 hover:text-white border border-white/10 font-bold transition-all flex items-center gap-2 font-sans text-xs"
                                 >
-                                    ✕ Close Immersive
+                                    <span className="material-symbols-outlined text-[14px]" style={{ transform: 'rotate(180deg)' }}>{SPEC_ICONS.back}</span>
+                                    Back
                                 </button>
                             </header>
 
                             <div className={`flex-1 px-12 py-8 z-10 flex flex-col items-center max-w-[1200px] mx-auto w-full relative transition-all duration-500 transform ${galleryModalState.isVisible ? 'scale-100 translate-y-0' : 'scale-95 translate-y-4'}`}>
                                 
                                 <div className="flex flex-col lg:flex-row items-stretch justify-center gap-10 w-full mb-12">
-                                    <div className="w-full lg:w-[40%] bg-white/[0.02] border border-white/5 p-6 rounded-3xl flex flex-col justify-between gap-4">
-                                        <h4 className="text-xs font-black uppercase tracking-wider text-emerald-400 font-sans">Track & Performance Specs</h4>
-                                        <div className="grid grid-cols-1 gap-3 flex-1 justify-center">
+                                    <div 
+                                        style={{ background: gallerySpec.gradient, borderColor: gallerySpec.border }}
+                                        className="w-full lg:w-[40%] border p-6 rounded-3xl flex flex-col justify-between gap-4 relative"
+                                    >
+                                        <h4 className="text-xs font-black uppercase tracking-wider text-emerald-400 font-sans relative z-10">Performance Specs</h4>
+                                        <div className="grid grid-cols-1 gap-3 flex-1 justify-center relative z-10">
                                             
-                                            <div className="bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl flex flex-col gap-2">
+                                            <div className="bg-black/20 border border-white/[0.06] p-4 rounded-2xl flex flex-col gap-2">
                                                 <div className="flex justify-between items-center">
-                                                    <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider font-sans">Racetrack Stopwatch</span>
+                                                    <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider font-sans flex items-center gap-1.5">
+                                                        <span className="material-symbols-outlined text-[13px]">{SPEC_ICONS.stopwatch}</span> Racetrack Stopwatch
+                                                    </span>
                                                     {selectedGalleryCar.bestLap ? (
                                                         <span className="text-[10px] font-bold text-[#ffd60a] flex items-center gap-1 font-sans">
                                                             🏆 Best: {formatLapTime(selectedGalleryCar.bestLap)}
@@ -3186,25 +3263,35 @@
                                                 </div>
                                             </div>
 
-                                            <div className="bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl flex justify-between items-center">
-                                                <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider font-sans">Top Speed</span>
-                                                <span className="text-base font-black text-white font-sans">{selectedGalleryCar.topSpeed} mph</span>
-                                            </div>
-                                            <div className="bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl flex justify-between items-center">
-                                                <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider font-sans">Buy Price</span>
-                                                <span className="text-base font-black text-emerald-400 font-sans">${selectedGalleryCar.cost?.toLocaleString()}</span>
-                                            </div>
-                                            <div className="bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl flex justify-between items-center">
-                                                <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider font-sans">Horsepower</span>
-                                                <span className="text-base font-black text-white font-sans">{selectedGalleryCar.horsepower} HP</span>
-                                            </div>
-                                            <div className="bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl flex justify-between items-center">
-                                                <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider font-sans">Estimated Sell Price</span>
-                                                <span className="text-base font-black text-red-400 font-sans">${galleryEstimatedSell?.toLocaleString()}</span>
-                                            </div>
-                                            <div className="bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl flex justify-between items-center">
-                                                <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider font-sans">Odometer Miles</span>
-                                                <span className="text-base font-black text-white font-sans">{Number(selectedGalleryCar.miles || 0).toLocaleString()} mi</span>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                {[
+                                                    [SPEC_ICONS.topSpeed, 'Top Speed', `${selectedGalleryCar.topSpeed || 0} mph`, 'text-white'],
+                                                    [SPEC_ICONS.buyPrice, 'Buy Price', `$${Number(selectedGalleryCar.cost || 0).toLocaleString()}`, 'text-emerald-400'],
+                                                    [SPEC_ICONS.horsepower, 'Horsepower', `${selectedGalleryCar.horsepower || 0} HP`, 'text-white'],
+                                                    [SPEC_ICONS.sellPrice, 'Sell Price', `$${(galleryEstimatedSell || 0).toLocaleString()}`, 'text-red-400'],
+                                                    [SPEC_ICONS.miles, 'Miles', `${Number(selectedGalleryCar.miles || 0).toLocaleString()}`, 'text-white'],
+                                                    [SPEC_ICONS.favorite, 'Favorite', selectedGalleryCar.favorite ? 'Yes' : 'No', selectedGalleryCar.favorite ? 'text-[#ffd60a]' : 'text-white/40'],
+                                                    [SPEC_ICONS.type, 'Type', selectedGalleryCar.type || '—', 'text-white'],
+                                                    [SPEC_ICONS.pass, 'Pass', selectedGalleryCar.pass || '—', 'text-white'],
+                                                    [SPEC_ICONS.zeroToSixty, '0-60', selectedGalleryCar.zeroToSixty !== '' && selectedGalleryCar.zeroToSixty != null ? `${selectedGalleryCar.zeroToSixty}s` : '—', 'text-white'],
+                                                    [SPEC_ICONS.safetyRating, 'Safety Rating', selectedGalleryCar.safetyRating !== '' && selectedGalleryCar.safetyRating != null ? `${selectedGalleryCar.safetyRating} / 5` : '—', 'text-white'],
+                                                    [SPEC_ICONS.weight, 'Weight', selectedGalleryCar.weight !== '' && selectedGalleryCar.weight != null ? `${Number(selectedGalleryCar.weight).toLocaleString()} lbs` : '—', 'text-white'],
+                                                    [SPEC_ICONS.seats, 'Seats', selectedGalleryCar.seats !== '' && selectedGalleryCar.seats != null ? selectedGalleryCar.seats : '—', 'text-white'],
+                                                    [SPEC_ICONS.country, 'Country', selectedGalleryCar.country || '—', 'text-white'],
+                                                    [SPEC_ICONS.engineType, 'Engine', selectedGalleryCar.engineType || '—', 'text-white'],
+                                                    [SPEC_ICONS.fuel, 'Fuel', selectedGalleryCar.fuel || '—', 'text-white'],
+                                                    [SPEC_ICONS.transmission, 'Transmission', selectedGalleryCar.transmission || '—', 'text-white'],
+                                                    [SPEC_ICONS.canTow, 'Can Tow', selectedGalleryCar.canTow ? 'Yes' : 'No', selectedGalleryCar.canTow ? 'text-emerald-400' : 'text-white/40'],
+                                                    [SPEC_ICONS.hasCruiseControl, 'Cruise Control', selectedGalleryCar.hasCruiseControl ? 'Yes' : 'No', selectedGalleryCar.hasCruiseControl ? 'text-emerald-400' : 'text-white/40'],
+                                                    [SPEC_ICONS.hasCruiseControl, 'Driving Assist', selectedGalleryCar.hasDrivingAssist ? 'Yes' : 'No', selectedGalleryCar.hasDrivingAssist ? 'text-emerald-400' : 'text-white/40']
+                                                ].map(([icon, label, value, colorClass]) => (
+                                                    <div key={label} className="bg-black/20 border border-white/[0.06] p-3 rounded-2xl flex flex-col gap-1.5">
+                                                        <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider font-sans flex items-center gap-1">
+                                                            <span className="material-symbols-outlined text-[12px]">{icon}</span> {label}
+                                                        </span>
+                                                        <span className={`text-sm font-black font-sans ${colorClass} truncate`}>{value}</span>
+                                                    </div>
+                                                ))}
                                             </div>
                                         </div>
                                     </div>
@@ -3271,22 +3358,22 @@
                                             </div>
 
                                             <div className="z-10">
-                                                <div className="grid grid-cols-2 gap-x-2 pb-2 border-t border-white/[0.04] pt-2">
+                                                <div className="grid grid-cols-4 gap-x-2 pb-2 border-t border-white/[0.04] pt-2">
                                                     <div>
-                                                        <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-0.5 font-sans">
-                                                            {isVignetteHovered ? 'Horsepower' : 'Top Speed'}
-                                                        </span>
-                                                        <span className="text-xs font-bold text-white block font-sans">
-                                                            {isVignetteHovered ? `${selectedGalleryCar.horsepower} HP` : `${selectedGalleryCar.topSpeed} mph`}
-                                                        </span>
+                                                        <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider block mb-0.5 font-sans">Top Speed</span>
+                                                        <span className="text-xs font-bold text-white block font-sans truncate">{selectedGalleryCar.topSpeed} mph</span>
                                                     </div>
                                                     <div>
-                                                        <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-0.5 font-sans">
-                                                            {isVignetteHovered ? 'Sell Price' : 'Buy Price'}
-                                                        </span>
-                                                        <span className={`text-xs font-bold block font-sans ${isVignetteHovered ? 'text-[#ff453a]' : 'text-[#30d158]'}`}>
-                                                            {isVignetteHovered ? `$${galleryEstimatedSell.toLocaleString()}` : `$${selectedGalleryCar.cost?.toLocaleString()}`}
-                                                        </span>
+                                                        <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider block mb-0.5 font-sans">HP</span>
+                                                        <span className="text-xs font-bold text-white block font-sans truncate">{selectedGalleryCar.horsepower} HP</span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider block mb-0.5 font-sans">Buy Price</span>
+                                                        <span className="text-xs font-bold text-[#30d158] block font-sans truncate">${selectedGalleryCar.cost?.toLocaleString()}</span>
+                                                    </div>
+                                                    <div className="flex flex-col items-start">
+                                                        <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider block mb-0.5 font-sans">Color</span>
+                                                        <span className="w-4 h-4 rounded-full border border-white/30" style={{ backgroundColor: `rgb(${gallerySpec.rawRGB})` }} />
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center justify-between border-t border-white/[0.04] pt-2">
@@ -3309,7 +3396,7 @@
                                                         )}
                                                     </div>
                                                     {selectedGalleryCar.favorite && (
-                                                        <span className="text-[10px] text-[#ffd60a] font-bold">★</span>
+                                                        <span className="material-symbols-outlined text-[14px] text-[#ffd60a]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24" }}>{SPEC_ICONS.favorite}</span>
                                                     )}
                                                 </div>
                                             </div>
@@ -3322,7 +3409,6 @@
                                     <div className="flex justify-between items-center pb-4 border-b border-white/[0.05] relative z-10">
                                         <div>
                                             <h4 className="text-xl font-black uppercase tracking-wider font-['Montserrat']">Photo Album ({selectedGalleryCar.images?.length || 0})</h4>
-                                            <p className="text-xs text-white/40 font-bold mt-1 font-sans">STAGGERED HIGH-RESOLUTION FLUID SYSTEM</p>
                                         </div>
                                         <div>
                                             <input 
@@ -3647,6 +3733,106 @@
                                             <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans">Top Speed (mph)</label>
                                             <input type="number" placeholder="180" value={currentCar.topSpeed} onChange={e => setCurrentCar({ ...currentCar, topSpeed: e.target.value })} className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-white/20 font-sans" />
                                         </div>
+                                    </div>
+
+                                    <div className="flex flex-col gap-1 mt-2">
+                                        <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans">Additional Specs</label>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans flex items-center gap-1">
+                                                <span className="material-symbols-outlined text-[12px]">{SPEC_ICONS.type}</span> Car Type
+                                            </label>
+                                            <select value={currentCar.type || 'Sedan'} onChange={e => setCurrentCar({ ...currentCar, type: e.target.value })} className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-white/20 font-sans">
+                                                {CAR_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans flex items-center gap-1">
+                                                <span className="material-symbols-outlined text-[12px]">{SPEC_ICONS.pass}</span> Pass
+                                            </label>
+                                            <select value={currentCar.pass || 'No Pass'} onChange={e => setCurrentCar({ ...currentCar, pass: e.target.value })} className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-white/20 font-sans">
+                                                {CAR_PASSES.map(p => <option key={p} value={p}>{p}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans flex items-center gap-1">
+                                                <span className="material-symbols-outlined text-[12px]">{SPEC_ICONS.zeroToSixty}</span> 0-60 (seconds)
+                                            </label>
+                                            <input type="number" step="0.1" placeholder="3.8" value={currentCar.zeroToSixty} onChange={e => setCurrentCar({ ...currentCar, zeroToSixty: e.target.value })} className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-white/20 font-sans" />
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans flex items-center gap-1">
+                                                <span className="material-symbols-outlined text-[12px]">{SPEC_ICONS.safetyRating}</span> Safety Rating (0.5-5)
+                                            </label>
+                                            <input type="number" step="0.5" min="0.5" max="5" placeholder="4.5" value={currentCar.safetyRating} onChange={e => setCurrentCar({ ...currentCar, safetyRating: e.target.value })} className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-white/20 font-sans" />
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans flex items-center gap-1">
+                                                <span className="material-symbols-outlined text-[12px]">{SPEC_ICONS.weight}</span> Weight (lbs)
+                                            </label>
+                                            <input type="number" placeholder="3200" value={currentCar.weight} onChange={e => setCurrentCar({ ...currentCar, weight: e.target.value })} className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-white/20 font-sans" />
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans flex items-center gap-1">
+                                                <span className="material-symbols-outlined text-[12px]">{SPEC_ICONS.seats}</span> Seats
+                                            </label>
+                                            <input type="number" placeholder="4" value={currentCar.seats} onChange={e => setCurrentCar({ ...currentCar, seats: e.target.value })} className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-white/20 font-sans" />
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans flex items-center gap-1">
+                                                <span className="material-symbols-outlined text-[12px]">{SPEC_ICONS.country}</span> Country
+                                            </label>
+                                            <input placeholder="e.g. Germany" value={currentCar.country || ""} onChange={e => setCurrentCar({ ...currentCar, country: e.target.value })} className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-white/20 font-sans" />
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans flex items-center gap-1">
+                                                <span className="material-symbols-outlined text-[12px]">{SPEC_ICONS.fuel}</span> Fuel
+                                            </label>
+                                            <select value={currentCar.fuel || 'Gasoline'} onChange={e => setCurrentCar({ ...currentCar, fuel: e.target.value })} className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-white/20 font-sans">
+                                                {CAR_FUEL_TYPES.map(f => <option key={f} value={f}>{f}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans flex items-center gap-1">
+                                                <span className="material-symbols-outlined text-[12px]">{SPEC_ICONS.transmission}</span> Transmission
+                                            </label>
+                                            <select value={currentCar.transmission || 'Auto'} onChange={e => setCurrentCar({ ...currentCar, transmission: e.target.value })} className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-white/20 font-sans">
+                                                {CAR_TRANSMISSIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-white/40 uppercase font-black pl-1 font-sans flex items-center gap-1">
+                                                <span className="material-symbols-outlined text-[12px]">{SPEC_ICONS.engineType}</span> Engine
+                                            </label>
+                                            <input placeholder="e.g. 3.5L V6 Twin-Turbo" value={currentCar.engineType || ""} onChange={e => setCurrentCar({ ...currentCar, engineType: e.target.value })} className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-white/20 font-sans" />
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-3 gap-3 mt-1">
+                                        {[
+                                            { key: 'canTow', label: 'Can Tow' },
+                                            { key: 'hasCruiseControl', label: 'Cruise Control' },
+                                            { key: 'hasDrivingAssist', label: 'Driving Assist' }
+                                        ].map(({ key, label }) => {
+                                            const isActive = !!currentCar[key];
+                                            return (
+                                                <button
+                                                    key={key}
+                                                    type="button"
+                                                    onClick={() => setCurrentCar({ ...currentCar, [key]: !isActive })}
+                                                    style={{
+                                                        backgroundColor: isActive ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.02)',
+                                                        color: isActive ? '#34d399' : 'rgba(255,255,255,0.3)',
+                                                        borderColor: isActive ? '#34d399' : 'rgba(255,255,255,0.06)'
+                                                    }}
+                                                    className="py-2 rounded-xl text-[10px] font-black tracking-wider uppercase border text-center transition-all duration-300 font-sans"
+                                                >
+                                                    {label}
+                                                </button>
+                                            );
+                                        })}
                                     </div>
 
                                     <div className="flex gap-2 mt-6 pt-4 border-t border-white/[0.04]">
