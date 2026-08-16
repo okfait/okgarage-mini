@@ -575,6 +575,77 @@
             back: "arrow_forward_ios"
         };
 
+        // ---------------------------------------------------------------------
+        // Chapter 4: the mission/gambling-rail system.
+        //
+        // Roll flow: Randomizer (what to filter by) -> Selection (the specific
+        // value, skipped if Randomizer landed on "Random Car") -> Garage (the
+        // actual car pulled, matching the selection) -> Mission (what you have
+        // to do with it).
+        // ---------------------------------------------------------------------
+        const MISSION_RANDOMIZER_TYPES = ["Color", "Brand", "Category", "Pass", "Random Car"];
+
+        const MISSION_TYPES = [
+            {
+                id: 'follow_car',
+                title: 'Follow a car for 10 minutes',
+                description: 'You MUST follow a random car for {10 minutes}. If the vehicle {pulls over} or you {collide}, the timer resets and you start again with a different car to follow.',
+                highlight: ['10 minutes', 'pulls over', 'collide'],
+                kind: 'timer',
+                durationSeconds: 600,
+                actionLabel: 'Restart'
+            },
+            {
+                id: 'drive_distance',
+                title: 'Drive 10 miles',
+                description: 'Log {10 miles} behind the wheel of this car. Doesn\'t matter how you rack it up -- just get the distance in.',
+                highlight: ['10 miles'],
+                kind: 'manual',
+                actionLabel: 'Done'
+            },
+            {
+                id: 'park_perfect',
+                title: 'Park perfectly 3 times',
+                description: 'Find {3 different spots} and pull off a clean, straight park at each one. No curb checks, no doing it twice.',
+                highlight: ['3 different spots'],
+                kind: 'manual',
+                actionLabel: 'Done'
+            },
+            {
+                id: 'avoid_highway',
+                title: 'Drive 5 miles, no highway',
+                description: 'Cover {5 miles} using backroads and city streets only. Touching the highway resets your progress.',
+                highlight: ['5 miles'],
+                kind: 'manual',
+                actionLabel: 'Done'
+            },
+            {
+                id: 'photo_tour',
+                title: 'Photo stop at 3 landmarks',
+                description: 'Snap a picture of this car at {3 landmarks} around the map and drop them in the Photo Album.',
+                highlight: ['3 landmarks'],
+                kind: 'manual',
+                actionLabel: 'Done'
+            }
+        ];
+
+        // Splits mission description text on {bracketed} phrases and wraps
+        // them in a span colored with the rolled car's color, so the key
+        // requirement (distance, time, count) actually stands out.
+        const renderHighlightedText = (text, colorRGB) => {
+            const parts = text.split(/(\{[^}]+\})/g);
+            return parts.map((part, idx) => {
+                if (part.startsWith('{') && part.endsWith('}')) {
+                    return (
+                        <span key={idx} style={{ color: `rgb(${colorRGB})` }} className="font-black">
+                            {part.slice(1, -1)}
+                        </span>
+                    );
+                }
+                return <React.Fragment key={idx}>{part}</React.Fragment>;
+            });
+        };
+
         const compressBase64 = (base64Str, maxWidth = 640, maxHeight = 480, quality = 0.85) => {
             return new Promise((resolve) => {
                 if (!base64Str || !base64Str.startsWith("data:image")) {
@@ -1076,6 +1147,61 @@
             const [loadingReveal, setLoadingReveal] = useState({ show: true, loaded: 0, total: 0, exiting: false });
             const [cloudSavingActive, setCloudSavingActive] = useState(false);
 
+            // --- Chapter 4: missions ---
+            const MISSIONS_STORAGE_KEY = 'okgarage_mini_missions_v1';
+            const [missions, setMissions] = useState([]);
+            const [missionsLoaded, setMissionsLoaded] = useState(false);
+            const [isMissionHubOpen, setIsMissionHubOpen] = useState(false);
+            const [isNewMissionRolling, setIsNewMissionRolling] = useState(false);
+            const [rollRandomizer, setRollRandomizer] = useState({ spinning: false, display: '', value: null });
+            const [rollSelection, setRollSelection] = useState({ spinning: false, display: '', value: null });
+            const [rollGarage, setRollGarage] = useState({ spinning: false, display: '', value: null });
+            const [rollMission, setRollMission] = useState({ spinning: false, display: '', value: null });
+            const [rollComplete, setRollComplete] = useState(false);
+            const [missionTimerTick, setMissionTimerTick] = useState(0);
+
+            useEffect(() => {
+                (async () => {
+                    try {
+                        const saved = await idbGet(MISSIONS_STORAGE_KEY);
+                        if (saved) setMissions(saved);
+                    } catch (e) {
+                        console.warn("Failed to load missions:", e);
+                    } finally {
+                        setMissionsLoaded(true);
+                    }
+                })();
+            }, []);
+
+            useEffect(() => {
+                if (!missionsLoaded) return;
+                idbSet(MISSIONS_STORAGE_KEY, missions).catch(e => console.warn("Failed to save missions:", e));
+            }, [missions, missionsLoaded]);
+
+            // Ticks active timer-missions once a second: drives the live
+            // countdown display and auto-completes when time runs out (no
+            // manual "complete" button for timer missions by design).
+            useEffect(() => {
+                const hasActiveTimer = missions.some(m => m.status === 'active' && m.timerStartedAt);
+                if (!hasActiveTimer) return;
+                const interval = setInterval(() => {
+                    setMissionTimerTick(t => t + 1);
+                    setMissions(prev => prev.map(m => {
+                        if (m.status === 'active' && m.timerStartedAt) {
+                            const missionType = MISSION_TYPES.find(mt => mt.id === m.missionTypeId);
+                            if (missionType && missionType.kind === 'timer') {
+                                const elapsed = Date.now() - m.timerStartedAt;
+                                if (elapsed >= missionType.durationSeconds * 1000) {
+                                    return { ...m, status: 'completed', completedAt: Date.now(), timerStartedAt: null };
+                                }
+                            }
+                        }
+                        return m;
+                    }));
+                }, 1000);
+                return () => clearInterval(interval);
+            }, [missions]);
+
             // Theme context states
             const [palette, setPalette] = useState(() => {
                 try {
@@ -1122,6 +1248,10 @@
             const [isColorDropdownOpen, setIsColorDropdownOpen] = useState(false);
             const [levelFilter, setLevelFilter] = useState('All Levels');
             const [isLevelDropdownOpen, setIsLevelDropdownOpen] = useState(false);
+            const [typeFilter, setTypeFilter] = useState('All Types');
+            const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
+            const [passFilter, setPassFilter] = useState('All Passes');
+            const [isPassDropdownOpen, setIsPassDropdownOpen] = useState(false);
 
             // Dynamic interaction tracking
             const [hoveredCardId, setHoveredCardId] = useState(null);
@@ -2035,7 +2165,17 @@
                         matchesLevel = resolvedLvl === filterLvl;
                     }
 
-                    return matchesSearch && matchesFavorite && matchesColor && matchesLevel;
+                    let matchesType = true;
+                    if (typeFilter !== 'All Types') {
+                        matchesType = (car.type || 'Other') === typeFilter;
+                    }
+
+                    let matchesPass = true;
+                    if (passFilter !== 'All Passes') {
+                        matchesPass = (car.pass || 'No Pass') === passFilter;
+                    }
+
+                    return matchesSearch && matchesFavorite && matchesColor && matchesLevel && matchesType && matchesPass;
                 });
 
                 return result.sort((a, b) => {
@@ -2061,7 +2201,7 @@
 
                     return sortDirection === 'desc' ? (valA < valB ? 1 : -1) : (valA > valB ? 1 : -1);
                 });
-            }, [garage, garageSearch, garageSortBy, sortDirection, showOnlyFavorites, colorFilter, levelFilter, activeServer, palette]);
+            }, [garage, garageSearch, garageSortBy, sortDirection, showOnlyFavorites, colorFilter, levelFilter, activeServer, palette, typeFilter, passFilter]);
 
             const handleDeleteAll = async () => {
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'okgarage-mini-app';
@@ -2108,6 +2248,117 @@
                     setGalleryModalState({ isRendered: false, isVisible: false });
                     setSelectedGalleryCar(null);
                 }, 300);
+            };
+
+            // --- Chapter 4: mission roll sequence ---
+            const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+
+            const spinRailValues = async (values, onTick, spinMs = 1100, tickMs = 90) => {
+                if (values.length === 0) return;
+                const start = performance.now();
+                while (performance.now() - start < spinMs) {
+                    onTick(values[Math.floor(Math.random() * values.length)]);
+                    await sleep(tickMs);
+                }
+            };
+
+            const handleStartRoll = async () => {
+                if (garage.length === 0) {
+                    showNotification("Add at least one car to your garage before rolling a mission.");
+                    return;
+                }
+                setRollComplete(false);
+                setRollRandomizer({ spinning: true, display: '', value: null });
+                setRollSelection({ spinning: false, display: '—', value: null });
+                setRollGarage({ spinning: false, display: '—', value: null });
+                setRollMission({ spinning: false, display: '—', value: null });
+
+                // Rail 1: Randomizer
+                const finalRandomizer = MISSION_RANDOMIZER_TYPES[Math.floor(Math.random() * MISSION_RANDOMIZER_TYPES.length)];
+                await spinRailValues(MISSION_RANDOMIZER_TYPES, (v) => setRollRandomizer({ spinning: true, display: v, value: null }));
+                setRollRandomizer({ spinning: false, display: finalRandomizer, value: finalRandomizer });
+                await sleep(350);
+
+                // Rail 2: Selection (skipped entirely if Randomizer landed on "Random Car")
+                let finalSelection = null;
+                let selectionOptions = [];
+                if (finalRandomizer === 'Color') {
+                    selectionOptions = [...new Set(garage.map(c => getColorFamily(c.color)))];
+                } else if (finalRandomizer === 'Brand') {
+                    selectionOptions = [...new Set(garage.map(c => c.brand).filter(Boolean))];
+                } else if (finalRandomizer === 'Category') {
+                    selectionOptions = [...new Set(garage.map(c => c.type || 'Other'))];
+                } else if (finalRandomizer === 'Pass') {
+                    selectionOptions = [...new Set(garage.map(c => c.pass || 'No Pass'))];
+                }
+
+                if (finalRandomizer === 'Random Car' || selectionOptions.length === 0) {
+                    setRollSelection({ spinning: false, display: 'Skipped', value: null });
+                } else {
+                    finalSelection = selectionOptions[Math.floor(Math.random() * selectionOptions.length)];
+                    await spinRailValues(selectionOptions, (v) => setRollSelection({ spinning: true, display: v, value: null }));
+                    setRollSelection({ spinning: false, display: finalSelection, value: finalSelection });
+                }
+                await sleep(350);
+
+                // Rail 3: Garage (a car matching the selection, or fully random)
+                let matchingCars = garage;
+                if (finalSelection) {
+                    if (finalRandomizer === 'Color') matchingCars = garage.filter(c => getColorFamily(c.color) === finalSelection);
+                    else if (finalRandomizer === 'Brand') matchingCars = garage.filter(c => c.brand === finalSelection);
+                    else if (finalRandomizer === 'Category') matchingCars = garage.filter(c => (c.type || 'Other') === finalSelection);
+                    else if (finalRandomizer === 'Pass') matchingCars = garage.filter(c => (c.pass || 'No Pass') === finalSelection);
+                }
+                if (matchingCars.length === 0) matchingCars = garage;
+                const finalCar = matchingCars[Math.floor(Math.random() * matchingCars.length)];
+                const carDisplayNames = garage.map(c => `${c.brand} ${c.modelName}`);
+                await spinRailValues(carDisplayNames, (v) => setRollGarage({ spinning: true, display: v, value: null }));
+                setRollGarage({ spinning: false, display: `${finalCar.brand} ${finalCar.modelName}`, value: finalCar.id });
+                await sleep(350);
+
+                // Rail 4: Mission
+                const finalMission = MISSION_TYPES[Math.floor(Math.random() * MISSION_TYPES.length)];
+                const missionTitles = MISSION_TYPES.map(m => m.title);
+                await spinRailValues(missionTitles, (v) => setRollMission({ spinning: true, display: v, value: null }));
+                setRollMission({ spinning: false, display: finalMission.title, value: finalMission.id });
+
+                setRollComplete(true);
+            };
+
+            const handleContinueMission = () => {
+                const newMission = {
+                    id: Date.now(),
+                    carId: rollGarage.value,
+                    randomizerType: rollRandomizer.value,
+                    selectionValue: rollSelection.value,
+                    missionTypeId: rollMission.value,
+                    status: 'active',
+                    createdAt: Date.now(),
+                    completedAt: null,
+                    timerStartedAt: null,
+                    timerElapsedMs: 0
+                };
+                setMissions(prev => [...prev, newMission]);
+                setIsNewMissionRolling(false);
+                setIsMissionHubOpen(false);
+                const car = garage.find(c => c.id === rollGarage.value);
+                if (car) handleOpenGallery(car);
+            };
+
+            const handleMissionTimerToggle = (mission) => {
+                setMissions(prev => prev.map(m => m.id === mission.id ? { ...m, timerStartedAt: Date.now(), timerElapsedMs: 0 } : m));
+            };
+
+            const handleCompleteMission = (missionId) => {
+                setMissions(prev => prev.map(m => m.id === missionId ? { ...m, status: 'completed', completedAt: Date.now(), timerStartedAt: null } : m));
+                showNotification("Mission complete!");
+            };
+
+            const formatMissionTimer = (ms) => {
+                const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+                const mins = Math.floor(totalSeconds / 60);
+                const secs = totalSeconds % 60;
+                return `${mins}:${secs.toString().padStart(2, '0')}`;
             };
 
             // Pressing Escape closes whatever's on top -- small popups/menus
@@ -2789,6 +3040,95 @@
                         </div>
                     )}
 
+                    {/* Mission Hub */}
+                    {isMissionHubOpen && (
+                        <div className="fixed inset-0 z-[160] flex items-center justify-center p-6">
+                            <div className="absolute inset-0 bg-black/85 backdrop-blur-sm" onClick={() => setIsMissionHubOpen(false)} />
+                            <div className="relative bg-[#121318] border border-white/10 rounded-3xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-[0_24px_80px_rgba(0,0,0,0.9)]">
+                                <div className="px-8 py-6 border-b border-white/[0.06] flex items-center justify-between">
+                                    <div>
+                                        <h3 className="text-lg font-black font-['Montserrat']">Missions</h3>
+                                        <p className="text-[11px] text-white/40 font-sans mt-0.5">Roll a random car and objective from your garage</p>
+                                    </div>
+                                    <button
+                                        onClick={() => { setIsMissionHubOpen(false); setIsNewMissionRolling(true); handleStartRoll(); }}
+                                        className="h-10 px-5 rounded-full bg-emerald-500 hover:bg-emerald-600 text-black text-[13px] font-black transition-all flex items-center gap-1.5"
+                                    >
+                                        <span className="material-symbols-outlined text-[16px]">casino</span>
+                                        New Mission
+                                    </button>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-3">
+                                    {missions.length === 0 && (
+                                        <div className="text-center py-16 text-white/30 text-sm font-sans">No missions yet. Roll one to get started.</div>
+                                    )}
+                                    {[...missions].sort((a, b) => b.createdAt - a.createdAt).map(mission => {
+                                        const missionType = MISSION_TYPES.find(mt => mt.id === mission.missionTypeId);
+                                        const car = garage.find(c => c.id === mission.carId);
+                                        if (!missionType || !car) return null;
+                                        return (
+                                            <button
+                                                key={mission.id}
+                                                onClick={() => { setIsMissionHubOpen(false); handleOpenGallery(car); }}
+                                                className="text-left bg-white/[0.02] hover:bg-white/[0.05] border border-white/[0.06] rounded-2xl p-4 flex items-center justify-between gap-4 transition-colors"
+                                            >
+                                                <div className="flex flex-col gap-0.5">
+                                                    <span className="text-sm font-bold text-white font-sans">{missionType.title}</span>
+                                                    <span className="text-[11px] text-white/40 font-sans">{car.year} {car.brand} {car.modelName}</span>
+                                                </div>
+                                                <span className={`text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full font-sans ${mission.status === 'completed' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/50'}`}>
+                                                    {mission.status === 'completed' ? 'Completed' : 'Active'}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* New Mission Roll -- 4 slot rails */}
+                    {isNewMissionRolling && (
+                        <div className="fixed inset-0 z-[170] flex items-center justify-center p-6">
+                            <div className="absolute inset-0 bg-black/90 backdrop-blur-sm" />
+                            <div className="relative bg-[#121318] border border-white/10 rounded-3xl w-full max-w-3xl p-10 shadow-[0_24px_80px_rgba(0,0,0,0.9)] flex flex-col items-center gap-8">
+                                <h3 className="text-lg font-black font-['Montserrat'] text-center">Rolling your mission...</h3>
+
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 w-full">
+                                    {[
+                                        { label: 'Randomizer', rail: rollRandomizer },
+                                        { label: 'Selection', rail: rollSelection },
+                                        { label: 'Garage', rail: rollGarage },
+                                        { label: 'Mission', rail: rollMission }
+                                    ].map(({ label, rail }) => (
+                                        <div key={label} className="bg-black/40 border border-white/[0.08] rounded-2xl p-4 flex flex-col items-center gap-2 h-28 justify-center overflow-hidden">
+                                            <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider font-sans">{label}</span>
+                                            <span className={`text-xs font-black text-center font-sans leading-tight ${rail.spinning ? 'text-white/50 blur-[0.4px]' : 'text-white'}`}>
+                                                {rail.display || '—'}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {rollComplete ? (
+                                    <button
+                                        onClick={handleContinueMission}
+                                        className="h-12 px-8 rounded-full bg-emerald-500 hover:bg-emerald-600 text-black text-sm font-black transition-all animate-[loadingFadeOut_0.4s_ease-out_reverse]"
+                                    >
+                                        Continue
+                                    </button>
+                                ) : (
+                                    <button
+                                        onClick={() => setIsNewMissionRolling(false)}
+                                        className="h-10 px-6 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-white/60 text-xs font-bold transition-all"
+                                    >
+                                        Cancel
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     {toast.visible && (
                         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[150] flex items-center gap-3 px-6 py-3 rounded-full bg-[#181a20]/95 border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.85)] transition-all">
                             <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -2808,6 +3148,10 @@
                                 Import JSON File
                                 <input type="file" accept=".json" onChange={handleImportLocalFile} className="hidden" />
                             </label>
+                            <button onClick={() => setIsMissionHubOpen(true)} className="h-10 px-5 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[13px] font-semibold transition-all flex items-center gap-1.5">
+                                <span className="material-symbols-outlined text-[16px]">casino</span>
+                                Mission
+                            </button>
                             <button onClick={handleDeleteAll} className="h-10 px-5 rounded-full bg-red-900/20 hover:bg-red-900/40 border border-red-500/30 text-red-400 text-[13px] font-semibold transition-all">
                                 Delete All Vehicles
                             </button>
@@ -3119,7 +3463,7 @@
 
                                         <div className="relative">
                                             <button 
-                                                onClick={() => { setIsColorDropdownOpen(!isColorDropdownOpen); setIsLevelDropdownOpen(false); }}
+                                                onClick={() => { setIsColorDropdownOpen(!isColorDropdownOpen); setIsLevelDropdownOpen(false); setIsTypeDropdownOpen(false); setIsPassDropdownOpen(false); }}
                                                 className="h-9 px-4 rounded-xl bg-[#ffffff]/[0.05] backdrop-blur-xl border border-white/[0.06] text-[11px] font-medium text-white/70 hover:text-white hover:bg-white/10 flex items-center gap-2 transition-all"
                                             >
                                                 <span className="w-2.5 h-2.5 rounded-full border border-white/20" style={{ backgroundColor: getHexForColorName(colorFilter) }} />
@@ -3142,6 +3486,64 @@
                                                         >
                                                             <span className="w-2.5 h-2.5 rounded-full border border-white/20" style={{ backgroundColor: getHexForColorName(color) }} />
                                                             {color}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="relative">
+                                            <button 
+                                                onClick={() => { setIsTypeDropdownOpen(!isTypeDropdownOpen); setIsLevelDropdownOpen(false); setIsColorDropdownOpen(false); setIsPassDropdownOpen(false); }}
+                                                className="h-9 px-4 rounded-xl bg-[#ffffff]/[0.05] backdrop-blur-xl border border-white/[0.06] text-[11px] font-medium text-white/70 hover:text-white hover:bg-white/10 flex items-center gap-2 transition-all"
+                                            >
+                                                <span>Type: {typeFilter === 'All Types' ? 'All' : typeFilter}</span>
+                                                <span className="text-[9px]">▼</span>
+                                            </button>
+
+                                            {isTypeDropdownOpen && (
+                                                <div className="absolute right-0 mt-2 bg-[#18181c] border border-white/10 rounded-xl p-1 w-44 max-h-72 overflow-y-auto shadow-[0_12px_32px_rgba(0,0,0,0.6)] z-50 flex flex-col dropdown-active">
+                                                    {["All Types", ...CAR_TYPES].map(t => (
+                                                        <button
+                                                            key={t}
+                                                            onClick={() => {
+                                                                setTypeFilter(t);
+                                                                setIsTypeDropdownOpen(false);
+                                                            }}
+                                                            className={`px-3 py-2 text-left text-xs font-semibold rounded-lg flex items-center gap-2 transition-colors ${
+                                                                typeFilter === t ? "bg-white/10 text-white" : "text-white/60 hover:bg-white/5 hover:text-white"
+                                                            }`}
+                                                        >
+                                                            {t}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="relative">
+                                            <button 
+                                                onClick={() => { setIsPassDropdownOpen(!isPassDropdownOpen); setIsLevelDropdownOpen(false); setIsColorDropdownOpen(false); setIsTypeDropdownOpen(false); }}
+                                                className="h-9 px-4 rounded-xl bg-[#ffffff]/[0.05] backdrop-blur-xl border border-white/[0.06] text-[11px] font-medium text-white/70 hover:text-white hover:bg-white/10 flex items-center gap-2 transition-all"
+                                            >
+                                                <span>Pass: {passFilter === 'All Passes' ? 'All' : passFilter}</span>
+                                                <span className="text-[9px]">▼</span>
+                                            </button>
+
+                                            {isPassDropdownOpen && (
+                                                <div className="absolute right-0 mt-2 bg-[#18181c] border border-white/10 rounded-xl p-1 w-44 shadow-[0_12px_32px_rgba(0,0,0,0.6)] z-50 flex flex-col dropdown-active">
+                                                    {["All Passes", ...CAR_PASSES].map(p => (
+                                                        <button
+                                                            key={p}
+                                                            onClick={() => {
+                                                                setPassFilter(p);
+                                                                setIsPassDropdownOpen(false);
+                                                            }}
+                                                            className={`px-3 py-2 text-left text-xs font-semibold rounded-lg flex items-center gap-2 transition-colors ${
+                                                                passFilter === p ? "bg-white/10 text-white" : "text-white/60 hover:bg-white/5 hover:text-white"
+                                                            }`}
+                                                        >
+                                                            {p}
                                                         </button>
                                                     ))}
                                                 </div>
