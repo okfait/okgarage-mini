@@ -74,6 +74,24 @@
             box-shadow: 0 0 0 1px rgba(255,255,255,0.16), 0 16px 40px rgba(255,255,255,0.05), 0 12px 28px rgba(0,0,0,0.85);
         }
 
+        /* A second, bigger/brighter copy of the card's own color glow that
+           fades in on hover -- makes the background "grow and glow more"
+           instead of the static glow just sitting there. */
+        .card-glow-overlay {
+            position: absolute;
+            inset: -20%;
+            border-radius: inherit;
+            opacity: 0;
+            transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+            transform: scale(0.9);
+            pointer-events: none;
+            z-index: 0;
+        }
+        .group:hover .card-glow-overlay {
+            opacity: 1;
+            transform: scale(1);
+        }
+
         /* Staggered card entry animations */
         @keyframes cascadeIn {
             0% { opacity: 0; transform: translateY(15px) scale(0.97); }
@@ -551,6 +569,26 @@
 
         // Material Symbols icon name for each spec field, used in the
         // Performance Specs panel and the add/edit form.
+        // Custom icon pack for car types + mission button (your own uploaded
+        // PNGs, not Material Symbols).
+        const CAR_TYPE_ICON_URLS = {
+            "Convertible": "https://raw.githubusercontent.com/okfait/okgarage-mini/main/convertible.png",
+            "Coupe": "https://raw.githubusercontent.com/okfait/okgarage-mini/main/coupe.png",
+            "Emergency": "https://raw.githubusercontent.com/okfait/okgarage-mini/main/emergency.png",
+            "Hatchback": "https://raw.githubusercontent.com/okfait/okgarage-mini/main/hatchback.png",
+            "Limousine": "https://raw.githubusercontent.com/okfait/okgarage-mini/main/limousine.png",
+            "Minivan": "https://raw.githubusercontent.com/okfait/okgarage-mini/main/minivan.png",
+            "Motorhome": "https://raw.githubusercontent.com/okfait/okgarage-mini/main/motorhome.png",
+            "Other": "https://raw.githubusercontent.com/okfait/okgarage-mini/main/other.png",
+            "Sedan": "https://raw.githubusercontent.com/okfait/okgarage-mini/main/sedan.png",
+            "SUV": "https://raw.githubusercontent.com/okfait/okgarage-mini/main/suv.png",
+            "Truck": "https://raw.githubusercontent.com/okfait/okgarage-mini/main/truck.png",
+            "Ute": "https://raw.githubusercontent.com/okfait/okgarage-mini/main/ute.png",
+            "Van": "https://raw.githubusercontent.com/okfait/okgarage-mini/main/van.png",
+            "Wagon": "https://raw.githubusercontent.com/okfait/okgarage-mini/main/wagon.png"
+        };
+        const MISSION_ICON_URL = "https://raw.githubusercontent.com/okfait/okgarage-mini/main/mission.png";
+
         const SPEC_ICONS = {
             type: "directions_car",
             pass: "local_activity",
@@ -2354,6 +2392,11 @@
                 showNotification("Mission complete!");
             };
 
+            const handleCancelMission = (missionId) => {
+                setMissions(prev => prev.filter(m => m.id !== missionId));
+                showNotification("Mission cancelled.");
+            };
+
             const formatMissionTimer = (ms) => {
                 const totalSeconds = Math.max(0, Math.floor(ms / 1000));
                 const mins = Math.floor(totalSeconds / 60);
@@ -3006,6 +3049,10 @@
             const galleryLevel = selectedGalleryCar ? getCarLevel(selectedGalleryCar) : null;
             const galleryBadgeStyles = selectedGalleryCar ? getLevelBadgeStyles(galleryLevel) : null;
             const galleryEstimatedSell = selectedGalleryCar ? calculateEstimatedSellPrice(selectedGalleryCar.cost, selectedGalleryCar.miles) : 0;
+            const galleryMission = selectedGalleryCar 
+                ? [...missions].sort((a, b) => b.createdAt - a.createdAt).find(m => m.carId === selectedGalleryCar.id)
+                : null;
+            const galleryMissionType = galleryMission ? MISSION_TYPES.find(mt => mt.id === galleryMission.missionTypeId) : null;
 
             return (
                 <div className="w-full h-screen bg-[#07080b] text-white flex flex-col relative select-none overflow-hidden">
@@ -3054,7 +3101,7 @@
                                         onClick={() => { setIsMissionHubOpen(false); setIsNewMissionRolling(true); handleStartRoll(); }}
                                         className="h-10 px-5 rounded-full bg-emerald-500 hover:bg-emerald-600 text-black text-[13px] font-black transition-all flex items-center gap-1.5"
                                     >
-                                        <span className="material-symbols-outlined text-[16px]">casino</span>
+                                        <img src={MISSION_ICON_URL} alt="" className="w-4 h-4 object-contain" style={{ filter: 'brightness(0)' }} />
                                         New Mission
                                     </button>
                                 </div>
@@ -3149,7 +3196,7 @@
                                 <input type="file" accept=".json" onChange={handleImportLocalFile} className="hidden" />
                             </label>
                             <button onClick={() => setIsMissionHubOpen(true)} className="h-10 px-5 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[13px] font-semibold transition-all flex items-center gap-1.5">
-                                <span className="material-symbols-outlined text-[16px]">casino</span>
+                                <img src={MISSION_ICON_URL} alt="" className="w-4 h-4 object-contain" style={{ filter: 'invert(64%) sepia(45%) saturate(600%) hue-rotate(100deg) brightness(95%)' }} />
                                 Mission
                             </button>
                             <button onClick={handleDeleteAll} className="h-10 px-5 rounded-full bg-red-900/20 hover:bg-red-900/40 border border-red-500/30 text-red-400 text-[13px] font-semibold transition-all">
@@ -3262,6 +3309,7 @@
                                                         onClick={() => handleOpenGallery(ownedCar)}
                                                     >
                                                         <AmbientSpheres colorRGB={spec.rawRGB} count={5} intensify={isHovered} />
+                                                        <div className="card-glow-overlay" style={{ background: `radial-gradient(circle at 50% 50%, rgba(${spec.rawRGB}, 0.85) 0%, rgba(${spec.rawRGB}, 0.35) 35%, transparent 70%)` }} />
 
                                                         <div className="relative z-10 pr-1">
                                                             <div className="flex gap-6 items-baseline mb-2">
@@ -3585,6 +3633,7 @@
                                                     className="group relative rounded-2xl p-5 border transition-all card-transition h-[340px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer staggered-card card-glow-hover"
                                                 >
                                                     <AmbientSpheres colorRGB={spec.rawRGB} count={6} intensify={isHovered} />
+                                                    <div className="card-glow-overlay" style={{ background: `radial-gradient(circle at 50% 50%, rgba(${spec.rawRGB}, 0.85) 0%, rgba(${spec.rawRGB}, 0.35) 35%, transparent 70%)` }} />
 
                                                     <div className="relative z-10 pr-1">
                                                         <div className="flex gap-6 items-baseline">
@@ -3664,8 +3713,11 @@
                                                                     <span className="text-[9px] text-white/20 italic font-sans">No tags</span>
                                                                 )}
                                                             </div>
-                                                            {car.favorite && isHovered && (
-                                                                <span className="material-symbols-outlined text-[13px] text-[#ffd60a]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24" }}>{SPEC_ICONS.favorite}</span>
+                                                            {car.favorite && (
+                                                                <span 
+                                                                    className={`material-symbols-outlined text-[13px] text-[#ffd60a] transition-opacity duration-300 ease-out ${isHovered ? 'opacity-100' : 'opacity-0'}`} 
+                                                                    style={{ fontVariationSettings: "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24" }}
+                                                                >{SPEC_ICONS.favorite}</span>
                                                             )}
                                                         </div>
                                                     </div>
@@ -3739,12 +3791,12 @@
                                 </button>
                             </header>
 
-                            <div className={`flex-1 px-12 py-8 z-10 flex flex-col items-center max-w-[1200px] mx-auto w-full relative transition-all duration-500 transform ${galleryModalState.isVisible ? 'scale-100 translate-y-0' : 'scale-95 translate-y-4'}`}>
+                            <div className={`flex-1 px-12 py-8 z-10 flex flex-col items-center mx-auto w-full relative transition-all duration-500 transform ${galleryModalState.isVisible ? 'scale-100 translate-y-0' : 'scale-95 translate-y-4'}`} style={{ maxWidth: galleryMission ? '1600px' : '1200px' }}>
                                 
-                                <div className="flex flex-col lg:flex-row items-stretch justify-center gap-10 w-full mb-12">
+                                <div className="flex flex-col lg:flex-row items-stretch justify-center gap-8 w-full mb-12">
                                     <div 
                                         style={{ background: gallerySpec.gradient, borderColor: gallerySpec.border }}
-                                        className="w-full lg:w-[40%] border p-6 rounded-3xl flex flex-col justify-between gap-4 relative"
+                                        className={`w-full ${galleryMission ? 'lg:w-[30%]' : 'lg:w-[40%]'} border p-6 rounded-3xl flex flex-col justify-between gap-4 relative`}
                                     >
                                         <h4 className="text-xs font-black uppercase tracking-wider text-emerald-400 font-sans relative z-10">Performance Specs</h4>
                                         <div className="grid grid-cols-1 gap-3 flex-1 justify-center relative z-10">
@@ -3791,7 +3843,7 @@
                                                     [SPEC_ICONS.sellPrice, 'Sell Price', `$${(galleryEstimatedSell || 0).toLocaleString()}`, 'text-red-400'],
                                                     [SPEC_ICONS.miles, 'Miles', `${Number(selectedGalleryCar.miles || 0).toLocaleString()}`, 'text-white'],
                                                     [SPEC_ICONS.favorite, 'Favorite', selectedGalleryCar.favorite ? 'Yes' : 'No', selectedGalleryCar.favorite ? 'text-[#ffd60a]' : 'text-white/40'],
-                                                    [SPEC_ICONS.type, 'Type', selectedGalleryCar.type || '—', 'text-white'],
+                                                    ['TYPE_ICON', 'Type', selectedGalleryCar.type || '—', 'text-white'],
                                                     [SPEC_ICONS.pass, 'Pass', selectedGalleryCar.pass || '—', 'text-white'],
                                                     [SPEC_ICONS.zeroToSixty, '0-60', selectedGalleryCar.zeroToSixty !== '' && selectedGalleryCar.zeroToSixty != null ? `${selectedGalleryCar.zeroToSixty}s` : '—', 'text-white'],
                                                     [SPEC_ICONS.safetyRating, 'Safety Rating', selectedGalleryCar.safetyRating !== '' && selectedGalleryCar.safetyRating != null ? `${selectedGalleryCar.safetyRating} / 5` : '—', 'text-white'],
@@ -3807,7 +3859,9 @@
                                                 ].map(([icon, label, value, colorClass, circled]) => (
                                                     <div key={label} className="bg-black/20 border border-white/[0.06] p-3 rounded-2xl flex flex-col gap-1.5">
                                                         <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider font-sans flex items-center gap-1">
-                                                            {circled ? (
+                                                            {icon === 'TYPE_ICON' ? (
+                                                                <img src={CAR_TYPE_ICON_URLS[selectedGalleryCar.type] || CAR_TYPE_ICON_URLS['Other']} alt="" className="w-3 h-3 object-contain opacity-60" />
+                                                            ) : circled ? (
                                                                 <span className="material-symbols-outlined text-[10px] w-3.5 h-3.5 rounded-full border border-white/25 flex items-center justify-center leading-none">{icon}</span>
                                                             ) : (
                                                                 <span className="material-symbols-outlined text-[12px]">{icon}</span>
@@ -3820,15 +3874,17 @@
                                         </div>
                                     </div>
 
+
                                     {/* Primary Centered Vignette card */}
-                                    <div className="w-full lg:w-[60%] flex flex-col justify-center items-center">
+                                    <div className={`w-full ${galleryMission ? 'lg:w-[35%]' : 'lg:w-[60%]'} flex flex-col justify-center items-center`}>
                                         <div 
                                             style={{ background: gallerySpec.gradient, borderColor: gallerySpec.border }}
-                                            className="w-full max-w-[480px] rounded-3xl p-6 border transition-all card-transition relative shadow-2xl h-full min-h-[380px] flex flex-col justify-between"
+                                            className="w-full max-w-[480px] rounded-3xl p-6 border transition-all card-transition relative shadow-2xl h-full min-h-[380px] flex flex-col justify-between card-glow-hover"
                                             onMouseEnter={() => setIsVignetteHovered(true)}
                                             onMouseLeave={() => setIsVignetteHovered(false)}
                                         >
-                                            <AmbientSpheres colorRGB={gallerySpec.rawRGB} count={6} />
+                                            <AmbientSpheres colorRGB={gallerySpec.rawRGB} count={6} intensify={isVignetteHovered} />
+                                            <div className="card-glow-overlay" style={{ background: `radial-gradient(circle at 50% 50%, rgba(${gallerySpec.rawRGB}, 0.85) 0%, rgba(${gallerySpec.rawRGB}, 0.35) 35%, transparent 70%)`, opacity: isVignetteHovered ? 1 : 0, transform: isVignetteHovered ? 'scale(1)' : 'scale(0.9)' }} />
 
                                             <button
                                                 onClick={() => handleSaveCardImage(selectedGalleryCar)}
@@ -3926,6 +3982,79 @@
                                             </div>
                                         </div>
                                     </div>
+
+                                    {/* Mission panel -- only appears when this car has a rolled mission */}
+                                    {galleryMission && galleryMissionType && (
+                                        <div 
+                                            style={{ background: gallerySpec.gradient, borderColor: gallerySpec.border }}
+                                            className="w-full lg:w-[35%] border p-6 rounded-3xl flex flex-col gap-4 relative"
+                                        >
+                                            <div className="flex items-center justify-between relative z-10">
+                                                <h4 className="text-xs font-black uppercase tracking-wider text-emerald-400 font-sans">Mission</h4>
+                                                {galleryMission.status === 'completed' && (
+                                                    <span className="text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 font-sans">Completed</span>
+                                                )}
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-2 relative z-10">
+                                                {[
+                                                    ['Randomizer', galleryMission.randomizerType],
+                                                    ['Selection', galleryMission.selectionValue || 'Skipped'],
+                                                    ['Garage', `${selectedGalleryCar.brand} ${selectedGalleryCar.modelName}`],
+                                                    ['Mission', galleryMissionType.title]
+                                                ].map(([label, value]) => (
+                                                    <div key={label} className="bg-black/20 border border-white/[0.06] p-2.5 rounded-xl flex flex-col gap-0.5">
+                                                        <span className="text-[8.5px] text-white/40 font-bold uppercase tracking-wider font-sans">{label}</span>
+                                                        <span className="text-[11px] font-bold text-white font-sans truncate">{value}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+
+                                            <div className="bg-black/20 border border-white/[0.06] p-4 rounded-2xl flex flex-col gap-3 relative z-10">
+                                                <h5 className="text-sm font-black text-white font-sans">{galleryMissionType.title}</h5>
+                                                <p className="text-[11px] text-white/60 leading-relaxed font-sans">
+                                                    {renderHighlightedText(galleryMissionType.description, gallerySpec.rawRGB)}
+                                                </p>
+
+                                                {galleryMission.status === 'completed' ? (
+                                                    <div className="text-center py-2 text-emerald-400 text-xs font-black uppercase tracking-wider font-sans flex items-center justify-center gap-1.5">
+                                                        <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                                                        Completed
+                                                    </div>
+                                                ) : galleryMissionType.kind === 'timer' ? (
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        <span className="text-lg font-mono font-black text-white">
+                                                            {galleryMission.timerStartedAt 
+                                                                ? formatMissionTimer(Math.max(0, galleryMissionType.durationSeconds * 1000 - (Date.now() - galleryMission.timerStartedAt)))
+                                                                : formatMissionTimer(galleryMissionType.durationSeconds * 1000)}
+                                                        </span>
+                                                        <button
+                                                            onClick={() => handleMissionTimerToggle(galleryMission)}
+                                                            className="px-4 py-2 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[11px] font-black uppercase tracking-wider transition-all font-sans"
+                                                        >
+                                                            {galleryMission.timerStartedAt ? galleryMissionType.actionLabel : 'Start'}
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => handleCompleteMission(galleryMission.id)}
+                                                        className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-black text-[11px] font-black uppercase tracking-wider transition-all font-sans"
+                                                    >
+                                                        {galleryMissionType.actionLabel}
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            {galleryMission.status !== 'completed' && (
+                                                <button
+                                                    onClick={() => handleCancelMission(galleryMission.id)}
+                                                    className="w-full py-2 rounded-xl bg-white/[0.03] hover:bg-red-500/10 border border-white/[0.06] hover:border-red-500/30 text-white/40 hover:text-red-400 text-[10px] font-black uppercase tracking-wider transition-all font-sans relative z-10"
+                                                >
+                                                    Cancel Mission
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Custom Unboxed photo album with aligned glowing edge */}
