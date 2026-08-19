@@ -584,6 +584,37 @@
         // Greenville only ever combines transmissions in these four ways.
         const CAR_TRANSMISSIONS = ["Auto", "Auto + Semi", "Auto + Semi + Manual", "Auto + Manual"];
 
+        // The prompt shown in the "Import from AI" popup -- paste this into
+        // Gemini (or any capable model) along with a screenshot of the car,
+        // and it should hand back a JSON block this app can parse straight
+        // into a new fleet vehicle.
+        const AI_IMPORT_PROMPT = `You are helping fill out a car database entry for a Roblox Greenville-based garage tracker app. I will give you the car's name/model/trim/year and a picture of it from the game. Using the image and your knowledge of this vehicle (or its closest real-world equivalent), respond with ONLY a raw JSON object -- no markdown, no code fences, no explanation before or after -- with exactly these fields:
+
+{
+  "year": <number>,
+  "brand": "<string>",
+  "modelName": "<string>",
+  "trim": "<string>",
+  "topSpeed": <number, mph>,
+  "horsepower": <number>,
+  "cost": <number, USD buy price>,
+  "type": "<one of exactly: Sedan, Ute, Coupe, Hatchback, Emergency, Limousine, SUV, Minivan, Truck, Convertible, Van, Wagon, Motorhome, Other>",
+  "pass": "<one of exactly: No Pass, Luxury, Public Services, Sports, Zero Emissions, Classic>",
+  "zeroToSixty": <number, seconds, e.g. 3.8>,
+  "safetyRating": <number, 0.5 to 5, in 0.5 increments, e.g. 4.5>,
+  "canTow": <true or false>,
+  "hasCruiseControl": <true or false>,
+  "hasDrivingAssist": <true or false>,
+  "weight": <number, lbs>,
+  "seats": <number>,
+  "country": "<string, country of origin>",
+  "engineType": "<string, e.g. '3.5L V6 Twin-Turbo'>",
+  "fuel": "<one of exactly: Gasoline, Diesel, Electric, Hybrid>",
+  "transmission": "<one of exactly: Auto, Auto + Semi, Auto + Semi + Manual, Auto + Manual>"
+}
+
+Only use the exact allowed values listed for type, pass, fuel, and transmission -- don't invent new categories. If you're unsure about a value, give your best realistic estimate instead of leaving it blank. Respond with the JSON object only, nothing else.`;
+
         // Material Symbols icon name for each spec field, used in the
         // Performance Specs panel and the add/edit form.
         // Custom icon pack for car types + mission button (your own uploaded
@@ -701,12 +732,12 @@
         // Splits mission description text on {bracketed} phrases and wraps
         // them in a span colored with the rolled car's color, so the key
         // requirement (distance, time, count) actually stands out.
-        const renderHighlightedText = (text, colorRGB) => {
+        const renderHighlightedText = (text) => {
             const parts = text.split(/(\{[^}]+\})/g);
             return parts.map((part, idx) => {
                 if (part.startsWith('{') && part.endsWith('}')) {
                     return (
-                        <span key={idx} style={{ color: `rgb(${colorRGB})` }} className="font-black">
+                        <span key={idx} className="font-black text-[#34d399]">
                             {part.slice(1, -1)}
                         </span>
                     );
@@ -1336,6 +1367,8 @@
             const [galleryModalState, setGalleryModalState] = useState({ isRendered: false, isVisible: false });
             
             const [currentCar, setCurrentCar] = useState(null);
+            const [isAiImportOpen, setIsAiImportOpen] = useState(false);
+            const [aiImportText, setAiImportText] = useState('');
             const [toast, setToast] = useState({ visible: false, message: '' });
 
             const [selectedGalleryCar, setSelectedGalleryCar] = useState(null);
@@ -2103,6 +2136,52 @@
                 setTimeout(() => {
                     setAddEditModalState({ isRendered: true, isVisible: true });
                 }, 50);
+            };
+
+            // Parses the JSON block pasted back from Gemini (per AI_IMPORT_PROMPT)
+            // and merges it into the currently open add/edit form. Validates
+            // enum-like fields against the real allowed lists so a hallucinated
+            // value doesn't silently break the dropdowns.
+            const handleAiImport = () => {
+                let parsed;
+                try {
+                    // Strip accidental ```json fences if the model added them anyway.
+                    const cleaned = aiImportText.trim().replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '');
+                    parsed = JSON.parse(cleaned);
+                } catch (e) {
+                    showNotification("Couldn't read that as JSON. Make sure you pasted Gemini's response exactly.");
+                    return;
+                }
+
+                const safeEnum = (value, allowed, fallback) => allowed.includes(value) ? value : fallback;
+
+                setCurrentCar(prev => ({
+                    ...prev,
+                    year: parsed.year ? String(parsed.year) : prev.year,
+                    brand: parsed.brand || prev.brand,
+                    modelName: parsed.modelName || prev.modelName,
+                    trim: parsed.trim || prev.trim,
+                    topSpeed: parsed.topSpeed ?? prev.topSpeed,
+                    horsepower: parsed.horsepower ?? prev.horsepower,
+                    cost: parsed.cost ?? prev.cost,
+                    type: safeEnum(parsed.type, CAR_TYPES, prev.type),
+                    pass: safeEnum(parsed.pass, CAR_PASSES, prev.pass),
+                    zeroToSixty: parsed.zeroToSixty ?? prev.zeroToSixty,
+                    safetyRating: parsed.safetyRating ?? prev.safetyRating,
+                    canTow: typeof parsed.canTow === 'boolean' ? parsed.canTow : prev.canTow,
+                    hasCruiseControl: typeof parsed.hasCruiseControl === 'boolean' ? parsed.hasCruiseControl : prev.hasCruiseControl,
+                    hasDrivingAssist: typeof parsed.hasDrivingAssist === 'boolean' ? parsed.hasDrivingAssist : prev.hasDrivingAssist,
+                    weight: parsed.weight ?? prev.weight,
+                    seats: parsed.seats ?? prev.seats,
+                    country: parsed.country || prev.country,
+                    engineType: parsed.engineType || prev.engineType,
+                    fuel: safeEnum(parsed.fuel, CAR_FUEL_TYPES, prev.fuel),
+                    transmission: safeEnum(parsed.transmission, CAR_TRANSMISSIONS, prev.transmission)
+                }));
+
+                setIsAiImportOpen(false);
+                setAiImportText('');
+                showNotification("Car details imported! Just add the photos.");
             };
 
             const handleSaveCar = async (e) => {
@@ -3912,14 +3991,14 @@
                                                     [SPEC_ICONS.weight, 'Weight', selectedGalleryCar.weight !== '' && selectedGalleryCar.weight != null ? `${Number(selectedGalleryCar.weight).toLocaleString()} lbs` : '—', 'text-white'],
                                                     [SPEC_ICONS.seats, 'Seats', selectedGalleryCar.seats !== '' && selectedGalleryCar.seats != null ? selectedGalleryCar.seats : '—', 'text-white'],
                                                     [SPEC_ICONS.country, 'Country', selectedGalleryCar.country || '—', 'text-white'],
-                                                    [SPEC_ICONS.engineType, 'Engine', selectedGalleryCar.engineType || '—', 'text-white'],
                                                     [SPEC_ICONS.fuel, 'Fuel', selectedGalleryCar.fuel || '—', 'text-white'],
-                                                    [SPEC_ICONS.transmission, 'Transmission', selectedGalleryCar.transmission || '—', 'text-white'],
                                                     [SPEC_ICONS.canTow, 'Can Tow', selectedGalleryCar.canTow ? 'Yes' : 'No', selectedGalleryCar.canTow ? 'text-emerald-400' : 'text-white/40'],
                                                     [SPEC_ICONS.hasCruiseControl, 'Cruise Control', selectedGalleryCar.hasCruiseControl ? 'Yes' : 'No', selectedGalleryCar.hasCruiseControl ? 'text-emerald-400' : 'text-white/40'],
-                                                    [SPEC_ICONS.hasCruiseControl, 'Driving Assist', selectedGalleryCar.hasDrivingAssist ? 'Yes' : 'No', selectedGalleryCar.hasDrivingAssist ? 'text-emerald-400' : 'text-white/40', true]
-                                                ].map(([icon, label, value, colorClass, circled]) => (
-                                                    <div key={label} className="bg-black/20 border border-white/[0.06] p-3 rounded-2xl flex flex-col gap-1.5">
+                                                    [SPEC_ICONS.hasCruiseControl, 'Driving Assist', selectedGalleryCar.hasDrivingAssist ? 'Yes' : 'No', selectedGalleryCar.hasDrivingAssist ? 'text-emerald-400' : 'text-white/40', true],
+                                                    [SPEC_ICONS.engineType, 'Engine', selectedGalleryCar.engineType || '—', 'text-white', false, true],
+                                                    [SPEC_ICONS.transmission, 'Transmission', selectedGalleryCar.transmission || '—', 'text-white', false, true]
+                                                ].map(([icon, label, value, colorClass, circled, wide]) => (
+                                                    <div key={label} className={`bg-black/20 border border-white/[0.06] p-3 rounded-2xl flex flex-col gap-1.5 ${wide ? 'col-span-2' : ''}`}>
                                                         <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider font-sans flex items-center gap-1">
                                                             {icon === 'TYPE_ICON' ? (
                                                                 <img src={CAR_TYPE_ICON_URLS[selectedGalleryCar.type] || CAR_TYPE_ICON_URLS['Other']} alt="" className="w-3 h-3 object-contain opacity-60" />
@@ -3929,7 +4008,7 @@
                                                                 <span className="material-symbols-outlined text-[12px]">{icon}</span>
                                                             )} {label}
                                                         </span>
-                                                        <span className={`text-sm font-black font-sans ${colorClass} truncate`}>{value}</span>
+                                                        <span className={`text-sm font-black font-sans ${colorClass} ${wide ? '' : 'truncate'}`}>{value}</span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -4097,7 +4176,7 @@
                                                     <h5 className="text-sm font-black text-white font-sans">{galleryMissionType.title}</h5>
                                                 </div>
                                                 <p className="text-[11px] text-white/60 leading-relaxed font-sans">
-                                                    {renderHighlightedText(galleryMissionType.description, gallerySpec.rawRGB)}
+                                                    {renderHighlightedText(galleryMissionType.description)}
                                                 </p>
 
                                                 {galleryMissionType.kind === 'timer' ? (
@@ -4276,9 +4355,19 @@
                             <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={handleCloseAddEdit}></div>
                             
                             <div className={`bg-[#121318] border border-white/10 w-full max-w-lg rounded-[28px] z-10 p-6 shadow-2xl relative transition-all duration-300 transform ${addEditModalState.isVisible ? 'scale-100 translate-y-0' : 'scale-95 translate-y-4'}`}>
-                                <h3 className="text-sm font-black uppercase tracking-widest mb-6 font-['Montserrat'] bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
-                                    {currentCar.id ? 'Edit Vehicle Properties' : 'Create New Fleet Vehicle'}
-                                </h3>
+                                <div className="flex items-center justify-between mb-6">
+                                    <h3 className="text-sm font-black uppercase tracking-widest font-['Montserrat'] bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
+                                        {currentCar.id ? 'Edit Vehicle Properties' : 'Create New Fleet Vehicle'}
+                                    </h3>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsAiImportOpen(true)}
+                                        className="h-8 px-3 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 text-emerald-400 text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5"
+                                    >
+                                        <span className="material-symbols-outlined text-[14px]">auto_awesome</span>
+                                        Import from AI
+                                    </button>
+                                </div>
                                 
                                 <form onSubmit={handleSaveCar} className="flex flex-col gap-4 overflow-y-auto max-h-[70vh] pr-1">
                                     
@@ -4587,6 +4676,70 @@
                                         >
                                             Delete "{paletteContextMenu.name}"
                                         </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {isAiImportOpen && (
+                                <div className="fixed inset-0 z-[120] flex items-center justify-center p-6">
+                                    <div className="absolute inset-0 bg-black/85 backdrop-blur-sm" onClick={() => setIsAiImportOpen(false)} />
+                                    <div className="relative bg-[#121318] border border-white/10 rounded-3xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-[0_24px_80px_rgba(0,0,0,0.9)]">
+                                        <div className="px-6 py-5 border-b border-white/[0.06] flex items-center gap-2">
+                                            <span className="material-symbols-outlined text-[18px] text-emerald-400">auto_awesome</span>
+                                            <h3 className="text-sm font-black font-['Montserrat']">Import from AI</h3>
+                                        </div>
+                                        <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-5">
+                                            <div className="flex flex-col gap-2">
+                                                <div className="flex items-center justify-between">
+                                                    <label className="text-[10px] text-white/40 uppercase font-black font-sans">Step 1 -- copy this prompt</label>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            navigator.clipboard.writeText(AI_IMPORT_PROMPT);
+                                                            showNotification("Prompt copied! Paste it into Gemini along with a screenshot of the car.");
+                                                        }}
+                                                        className="text-[10px] font-black uppercase tracking-wider text-emerald-400 hover:text-emerald-300 transition-colors flex items-center gap-1"
+                                                    >
+                                                        <span className="material-symbols-outlined text-[13px]">content_copy</span>
+                                                        Copy Prompt
+                                                    </button>
+                                                </div>
+                                                <div className="bg-black/40 border border-white/[0.06] rounded-xl p-3 text-[10px] text-white/40 font-mono leading-relaxed max-h-24 overflow-y-auto">
+                                                    {AI_IMPORT_PROMPT}
+                                                </div>
+                                                <p className="text-[10px] text-white/30 font-sans leading-relaxed">
+                                                    Paste this into Gemini along with a screenshot of the car and its name/year/trim. It'll hand back a JSON block.
+                                                </p>
+                                            </div>
+
+                                            <div className="flex flex-col gap-2">
+                                                <label className="text-[10px] text-white/40 uppercase font-black font-sans">Step 2 -- paste Gemini's response</label>
+                                                <textarea
+                                                    value={aiImportText}
+                                                    onChange={(e) => setAiImportText(e.target.value)}
+                                                    placeholder='{ "year": 2024, "brand": "...", ... }'
+                                                    rows={8}
+                                                    className="bg-black/40 border border-white/[0.06] rounded-xl px-4 py-3 text-[11px] font-mono text-white focus:outline-none focus:border-emerald-500/40 font-sans resize-none"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="p-6 pt-0 flex gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => { setIsAiImportOpen(false); setAiImportText(''); }}
+                                                className="flex-1 py-3 bg-white/5 hover:bg-white/10 rounded-xl text-xs font-black uppercase tracking-wider font-sans"
+                                            >
+                                                Cancel
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={handleAiImport}
+                                                disabled={!aiImportText.trim()}
+                                                className="flex-1 py-3 bg-gradient-to-b from-emerald-400 to-emerald-600 hover:from-emerald-300 hover:to-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed text-black rounded-xl text-xs font-black uppercase tracking-wider font-sans transition-all"
+                                            >
+                                                Fill In Details
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             )}
