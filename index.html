@@ -680,52 +680,87 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
             "Random Car": "shuffle"
         };
 
+        const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+        // Each mission type generates its own random params at roll time
+        // (genParams), then title/description are built FROM those params --
+        // that's how "follow a car for 3-8 minutes" turns into a specific
+        // "follow a car for 6 minutes" per roll instead of a fixed number.
+        // XP is what this mission awards toward that car's Mastery level.
         const MISSION_TYPES = [
             {
                 id: 'follow_car',
-                title: 'Follow a car for 10 minutes',
-                description: 'You MUST follow a random car for {10 minutes}. If the vehicle {pulls over} or you {collide}, the timer resets and you start again with a different car to follow.',
-                highlight: ['10 minutes', 'pulls over', 'collide'],
                 kind: 'timer',
-                durationSeconds: 600,
+                icon: 'visibility',
                 actionLabel: 'Restart',
-                icon: 'visibility'
+                xp: 120,
+                genParams: () => ({ minutes: randInt(3, 8) }),
+                getTitle: (p) => `Follow a car for ${p.minutes} minutes`,
+                getDescription: (p) => `You MUST follow a random car for {${p.minutes} minutes}. If the vehicle {pulls over} or you {collide}, the timer resets and you start again with a different car to follow.`,
+                getDurationSeconds: (p) => p.minutes * 60
             },
             {
                 id: 'drive_distance',
-                title: 'Drive 10 miles',
-                description: 'Log {10 miles} behind the wheel of this car. Doesn\'t matter how you rack it up -- just get the distance in.',
-                highlight: ['10 miles'],
                 kind: 'manual',
+                icon: 'route',
                 actionLabel: 'Done',
-                icon: 'route'
-            },
-            {
-                id: 'park_perfect',
-                title: 'Park perfectly 3 times',
-                description: 'Find {3 different spots} and pull off a clean, straight park at each one. No curb checks, no doing it twice.',
-                highlight: ['3 different spots'],
-                kind: 'manual',
-                actionLabel: 'Done',
-                icon: 'local_parking'
-            },
-            {
-                id: 'avoid_highway',
-                title: 'Drive 5 miles, no highway',
-                description: 'Cover {5 miles} using backroads and city streets only. Touching the highway resets your progress.',
-                highlight: ['5 miles'],
-                kind: 'manual',
-                actionLabel: 'Done',
-                icon: 'alt_route'
+                xp: 80,
+                genParams: () => ({ miles: randInt(5, 10) }),
+                getTitle: (p) => `Drive ${p.miles} miles`,
+                getDescription: (p) => `Log {${p.miles} miles} behind the wheel of this car. Doesn't matter how you rack it up -- just get the distance in.`
             },
             {
                 id: 'photo_tour',
-                title: 'Photo stop at 3 landmarks',
-                description: 'Snap a picture of this car at {3 landmarks} around the map and drop them in the Photo Album.',
-                highlight: ['3 landmarks'],
+                kind: 'counter',
+                icon: 'photo_camera',
+                actionLabel: 'Snap Photo',
+                xp: 100,
+                genParams: () => ({ photoCount: randInt(1, 5), minutes: randInt(5, 15) }),
+                getTarget: (p) => p.photoCount,
+                getTitle: (p) => `Take ${p.photoCount} photo${p.photoCount > 1 ? 's' : ''} in ${p.minutes} min`,
+                getDescription: (p) => `Snap {${p.photoCount} photo${p.photoCount > 1 ? 's' : ''}} of this car within {${p.minutes} minutes} and drop them in the Photo Album. Tap the button once per photo.`
+            },
+            {
+                id: 'refuel',
                 kind: 'manual',
+                icon: 'local_gas_station',
                 actionLabel: 'Done',
-                icon: 'photo_camera'
+                xp: 40,
+                genParams: () => ({}),
+                getTitle: () => `Refuel your vehicle`,
+                getDescription: () => `Pull into a station and {refuel} this car. That's the whole mission.`
+            },
+            {
+                id: 'uber',
+                kind: 'counter',
+                icon: 'person_pin_circle',
+                actionLabel: 'Picked Up',
+                xp: 90,
+                genParams: () => ({ peopleCount: randInt(1, 3) }),
+                getTarget: (p) => p.peopleCount,
+                getTitle: (p) => `Uber: pick up ${p.peopleCount} ${p.peopleCount > 1 ? 'people' : 'person'}`,
+                getDescription: (p) => `Play taxi for a bit -- pick up {${p.peopleCount} rider${p.peopleCount > 1 ? 's' : ''}} in this car. Tap the button once per rider.`
+            },
+            {
+                id: 'the_cut',
+                kind: 'the_cut',
+                icon: 'u_turn_left',
+                actionLabel: 'Cut',
+                xp: 220,
+                genParams: () => ({ cutTarget: randInt(15, 25) }),
+                getTarget: (p) => p.cutTarget,
+                getTitle: (p) => `The Cut: ${p.cutTarget} points`,
+                getDescription: (p) => `Spot oncoming traffic, let a few cars pass, then bust a U-turn and get on their tail -- that's a {cut}. Every cut counts toward {${p.cutTarget} points}. Actually catch up and pass the car after cutting it for bonus points via {Overtake}.`
+            },
+            {
+                id: 'new_pb',
+                kind: 'racetrack_pb',
+                icon: 'avg_time',
+                actionLabel: '',
+                xp: 150,
+                genParams: () => ({}),
+                getTitle: () => `Set a new Personal Best`,
+                getDescription: () => `Head to the racetrack and beat this car's current {PB} on the stopwatch. Auto-completes the moment you do.`
             }
         ];
 
@@ -1260,7 +1295,7 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
             const [rollRandomizer, setRollRandomizer] = useState({ spinning: false, display: '', value: null });
             const [rollSelection, setRollSelection] = useState({ spinning: false, display: '', value: null });
             const [rollGarage, setRollGarage] = useState({ spinning: false, display: '', value: null });
-            const [rollMission, setRollMission] = useState({ spinning: false, display: '', value: null });
+            const [rollMission, setRollMission] = useState({ spinning: false, display: '', value: null, params: null });
             const [rollComplete, setRollComplete] = useState(false);
             const [missionTimerTick, setMissionTimerTick] = useState(0);
 
@@ -1295,7 +1330,9 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                             const missionType = MISSION_TYPES.find(mt => mt.id === m.missionTypeId);
                             if (missionType && missionType.kind === 'timer') {
                                 const elapsed = Date.now() - m.timerStartedAt;
-                                if (elapsed >= missionType.durationSeconds * 1000) {
+                                const durationSeconds = missionType.getDurationSeconds(m.params || {});
+                                if (elapsed >= durationSeconds * 1000) {
+                                    awardMissionXp(m.carId, missionType.xp);
                                     return { ...m, status: 'completed', completedAt: Date.now(), timerStartedAt: null };
                                 }
                             }
@@ -2423,7 +2460,7 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                 setRollRandomizer({ spinning: true, display: '', value: null });
                 setRollSelection({ spinning: false, display: '—', value: null });
                 setRollGarage({ spinning: false, display: '—', value: null });
-                setRollMission({ spinning: false, display: '—', value: null });
+                setRollMission({ spinning: false, display: '—', value: null, params: null });
 
                 // Rail 1: Randomizer
                 const finalRandomizer = MISSION_RANDOMIZER_TYPES[Math.floor(Math.random() * MISSION_RANDOMIZER_TYPES.length)];
@@ -2470,9 +2507,9 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
 
                 // Rail 4: Mission
                 const finalMission = MISSION_TYPES[Math.floor(Math.random() * MISSION_TYPES.length)];
-                const missionTitles = MISSION_TYPES.map(m => m.title);
-                await spinRailValues(missionTitles, (v) => setRollMission({ spinning: true, display: v, value: null }));
-                setRollMission({ spinning: false, display: finalMission.title, value: finalMission.id });
+                const finalMissionParams = finalMission.genParams();
+                await spinRailValues(MISSION_TYPES, (m) => setRollMission({ spinning: true, display: m.getTitle(m.genParams()), value: null, params: null }));
+                setRollMission({ spinning: false, display: finalMission.getTitle(finalMissionParams), value: finalMission.id, params: finalMissionParams });
 
                 setRollComplete(true);
             };
@@ -2484,11 +2521,15 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                     randomizerType: rollRandomizer.value,
                     selectionValue: rollSelection.value,
                     missionTypeId: rollMission.value,
+                    params: rollMission.params || {},
                     status: 'active',
                     createdAt: Date.now(),
                     completedAt: null,
                     timerStartedAt: null,
-                    timerElapsedMs: 0
+                    timerElapsedMs: 0,
+                    progress: 0,
+                    cutCount: 0,
+                    overtakeCount: 0
                 };
                 setMissions(prev => [...prev, newMission]);
                 setIsNewMissionRolling(false);
@@ -2497,13 +2538,65 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                 if (car) handleOpenGallery(car);
             };
 
+            // Adds XP to a car's mastery total (used whenever a mission
+            // completes, whatever kind it was).
+            const awardMissionXp = (carId, xpAmount) => {
+                setGarage(prev => prev.map(c => c.id === carId ? { ...c, masteryXp: (c.masteryXp || 0) + xpAmount } : c));
+            };
+
             const handleMissionTimerToggle = (mission) => {
                 setMissions(prev => prev.map(m => m.id === mission.id ? { ...m, timerStartedAt: Date.now(), timerElapsedMs: 0 } : m));
             };
 
             const handleCompleteMission = (missionId) => {
+                const mission = missions.find(m => m.id === missionId);
+                const missionType = mission ? MISSION_TYPES.find(mt => mt.id === mission.missionTypeId) : null;
                 setMissions(prev => prev.map(m => m.id === missionId ? { ...m, status: 'completed', completedAt: Date.now(), timerStartedAt: null } : m));
+                if (mission && missionType) awardMissionXp(mission.carId, missionType.xp);
                 showNotification("Mission complete!");
+            };
+
+            // Counter missions (photo tour, uber): one tap = +1 progress,
+            // auto-completes once it hits the target.
+            const handleIncrementCounterMission = (mission) => {
+                const missionType = MISSION_TYPES.find(mt => mt.id === mission.missionTypeId);
+                if (!missionType) return;
+                const target = missionType.getTarget(mission.params || {});
+                const nextProgress = (mission.progress || 0) + 1;
+                const isDone = nextProgress >= target;
+                setMissions(prev => prev.map(m => m.id === mission.id ? {
+                    ...m,
+                    progress: nextProgress,
+                    status: isDone ? 'completed' : 'active',
+                    completedAt: isDone ? Date.now() : null
+                } : m));
+                if (isDone) {
+                    awardMissionXp(mission.carId, missionType.xp);
+                    showNotification("Mission complete!");
+                }
+            };
+
+            // The Cut: cuts count toward target directly, overtakes count for
+            // double (bonus for actually catching up after the cut).
+            const handleCutProgress = (mission, type) => {
+                const missionType = MISSION_TYPES.find(mt => mt.id === mission.missionTypeId);
+                if (!missionType) return;
+                const target = missionType.getTarget(mission.params || {});
+                const cuts = (mission.cutCount || 0) + (type === 'cut' ? 1 : 0);
+                const overtakes = (mission.overtakeCount || 0) + (type === 'overtake' ? 1 : 0);
+                const totalPoints = cuts + overtakes * 2;
+                const isDone = totalPoints >= target;
+                setMissions(prev => prev.map(m => m.id === mission.id ? {
+                    ...m,
+                    cutCount: cuts,
+                    overtakeCount: overtakes,
+                    status: isDone ? 'completed' : 'active',
+                    completedAt: isDone ? Date.now() : null
+                } : m));
+                if (isDone) {
+                    awardMissionXp(mission.carId, missionType.xp);
+                    showNotification("Mission complete!");
+                }
             };
 
             const handleCancelMission = (missionId) => {
@@ -3119,6 +3212,15 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                         });
                         setGarage(updatedGarage);
                         showNotification(`New Racetrack Personal Best! 🏁 ${formatLapTime(finishTime)}`);
+
+                        // Auto-complete any active "Set a new Personal Best" mission for this car.
+                        const pbMission = missions.find(m => m.carId === selectedGalleryCar.id && m.status === 'active' && m.missionTypeId === 'new_pb');
+                        if (pbMission) {
+                            const pbMissionType = MISSION_TYPES.find(mt => mt.id === 'new_pb');
+                            setMissions(prev => prev.map(m => m.id === pbMission.id ? { ...m, status: 'completed', completedAt: Date.now() } : m));
+                            if (pbMissionType) awardMissionXp(selectedGalleryCar.id, pbMissionType.xp);
+                            showNotification("Mission complete: new PB!");
+                        }
                     } else {
                         showNotification(`Lap Finished: ${formatLapTime(finishTime)}`);
                     }
@@ -3248,7 +3350,7 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                                                     <img src={CAR_TYPE_ICON_URLS[car.type]} alt="" className="w-8 h-8 object-contain opacity-80 shrink-0" />
                                                 )}
                                                 <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                                                    <span className="text-sm font-bold text-white font-sans truncate">{missionType.title}</span>
+                                                    <span className="text-sm font-bold text-white font-sans truncate">{missionType.getTitle(mission.params || {})}</span>
                                                     <span className="text-[11px] text-white/40 font-sans truncate">{car.year} {car.brand} {car.modelName}</span>
                                                 </div>
                                                 <span className={`text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full font-sans shrink-0 ${mission.status === 'completed' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/50'}`}>
@@ -4171,20 +4273,23 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                                             </div>
 
                                             <div className="bg-black/25 border border-white/[0.06] p-5 rounded-2xl flex flex-col gap-3 relative z-10">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="material-symbols-outlined text-[16px] text-white/50">{galleryMissionType.icon}</span>
-                                                    <h5 className="text-sm font-black text-white font-sans">{galleryMissionType.title}</h5>
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="material-symbols-outlined text-[16px] text-white/50">{galleryMissionType.icon}</span>
+                                                        <h5 className="text-sm font-black text-white font-sans">{galleryMissionType.getTitle(galleryMission.params || {})}</h5>
+                                                    </div>
+                                                    <span className="text-[9px] font-black text-emerald-400 font-sans shrink-0">+{galleryMissionType.xp} XP</span>
                                                 </div>
                                                 <p className="text-[11px] text-white/60 leading-relaxed font-sans">
-                                                    {renderHighlightedText(galleryMissionType.description)}
+                                                    {renderHighlightedText(galleryMissionType.getDescription(galleryMission.params || {}))}
                                                 </p>
 
-                                                {galleryMissionType.kind === 'timer' ? (
+                                                {galleryMissionType.kind === 'timer' && (
                                                     <div className="flex items-center justify-between gap-3 bg-black/30 rounded-xl px-4 py-3">
                                                         <span className="text-xl font-mono font-black text-white tabular-nums">
                                                             {galleryMission.timerStartedAt 
-                                                                ? formatMissionTimer(Math.max(0, galleryMissionType.durationSeconds * 1000 - (Date.now() - galleryMission.timerStartedAt)))
-                                                                : formatMissionTimer(galleryMissionType.durationSeconds * 1000)}
+                                                                ? formatMissionTimer(Math.max(0, galleryMissionType.getDurationSeconds(galleryMission.params || {}) * 1000 - (Date.now() - galleryMission.timerStartedAt)))
+                                                                : formatMissionTimer(galleryMissionType.getDurationSeconds(galleryMission.params || {}) * 1000)}
                                                         </span>
                                                         <button
                                                             onClick={() => handleMissionTimerToggle(galleryMission)}
@@ -4193,13 +4298,57 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                                                             {galleryMission.timerStartedAt ? galleryMissionType.actionLabel : 'Start'}
                                                         </button>
                                                     </div>
-                                                ) : (
+                                                )}
+
+                                                {galleryMissionType.kind === 'manual' && (
                                                     <button
                                                         onClick={() => handleCompleteMission(galleryMission.id)}
                                                         className="w-full py-2.5 rounded-xl bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-black text-[11px] font-black uppercase tracking-wider transition-all font-sans shadow-[0_4px_16px_rgba(16,185,129,0.3)]"
                                                     >
                                                         {galleryMissionType.actionLabel}
                                                     </button>
+                                                )}
+
+                                                {galleryMissionType.kind === 'counter' && (
+                                                    <div className="flex items-center gap-3">
+                                                        <span className="flex-1 text-center bg-black/30 rounded-xl px-4 py-2.5 text-sm font-mono font-black text-white tabular-nums">
+                                                            {galleryMission.progress || 0} / {galleryMissionType.getTarget(galleryMission.params || {})}
+                                                        </span>
+                                                        <button
+                                                            onClick={() => handleIncrementCounterMission(galleryMission)}
+                                                            className="px-4 py-2.5 rounded-xl bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-black text-[11px] font-black uppercase tracking-wider transition-all font-sans shadow-[0_4px_16px_rgba(16,185,129,0.3)]"
+                                                        >
+                                                            {galleryMissionType.actionLabel}
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                {galleryMissionType.kind === 'the_cut' && (
+                                                    <div className="flex flex-col gap-2">
+                                                        <span className="text-center bg-black/30 rounded-xl px-4 py-2 text-sm font-mono font-black text-white tabular-nums">
+                                                            {(galleryMission.cutCount || 0) + (galleryMission.overtakeCount || 0) * 2} / {galleryMissionType.getTarget(galleryMission.params || {})} pts
+                                                        </span>
+                                                        <div className="flex items-center gap-2">
+                                                            <button
+                                                                onClick={() => handleCutProgress(galleryMission, 'cut')}
+                                                                className="flex-1 py-2.5 rounded-xl bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-black text-[11px] font-black uppercase tracking-wider transition-all font-sans shadow-[0_4px_16px_rgba(16,185,129,0.3)]"
+                                                            >
+                                                                Cut ({galleryMission.cutCount || 0})
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleCutProgress(galleryMission, 'overtake')}
+                                                                className="flex-1 py-2.5 rounded-xl bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-black text-[11px] font-black uppercase tracking-wider transition-all font-sans shadow-[0_4px_16px_rgba(245,158,11,0.3)]"
+                                                            >
+                                                                Overtake ({galleryMission.overtakeCount || 0})
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {galleryMissionType.kind === 'racetrack_pb' && (
+                                                    <div className="text-center bg-black/30 rounded-xl px-4 py-3 text-[10px] text-white/40 font-bold uppercase tracking-wider font-sans">
+                                                        Auto-completes at the racetrack -- current PB: {selectedGalleryCar.bestLap ? formatLapTime(selectedGalleryCar.bestLap) : '—'}
+                                                    </div>
                                                 )}
                                             </div>
 
