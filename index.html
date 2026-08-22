@@ -148,21 +148,61 @@
             animation: loadingFadeOut 0.4s ease-out forwards;
         }
 
-        /* Mission roll rails: spin motion + settle flash */
-        @keyframes slotSpinMotion {
-            0% { transform: translateY(-6px); opacity: 0.35; }
-            50% { transform: translateY(0px); opacity: 0.9; }
-            100% { transform: translateY(6px); opacity: 0.35; }
+        /* Mission roll rails: tumbling reel + springy settle */
+        @keyframes slotTumbleIn {
+            0% { transform: translateY(-130%); opacity: 0; }
+            55% { transform: translateY(10%); opacity: 1; }
+            75% { transform: translateY(-4%); }
+            100% { transform: translateY(0); opacity: 1; }
         }
-        .rail-spinning-text {
-            animation: slotSpinMotion 0.15s ease-in-out infinite;
+        .rail-tumble {
+            animation: slotTumbleIn 0.24s cubic-bezier(0.34, 1.56, 0.64, 1);
+            will-change: transform, opacity;
         }
         @keyframes railSettleFlash {
             0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.55); background-color: rgba(16,185,129,0.18); }
             100% { box-shadow: 0 0 0 10px rgba(16,185,129,0); background-color: rgba(16,185,129,0.06); }
         }
         .rail-settled {
-            animation: railSettleFlash 0.6s ease-out forwards;
+            animation: railSettleFlash 0.7s ease-out forwards;
+        }
+        @keyframes railSettleBounce {
+            0% { transform: scale(1); }
+            35% { transform: scale(1.06); }
+            60% { transform: scale(0.98); }
+            100% { transform: scale(1); }
+        }
+        .rail-settle-bounce {
+            animation: railSettleBounce 0.45s cubic-bezier(0.34, 1.56, 0.64, 1), railSettleFlash 0.7s ease-out forwards;
+        }
+        @keyframes railCheckPop {
+            0% { transform: scale(0) rotate(-30deg); opacity: 0; }
+            60% { transform: scale(1.3) rotate(8deg); opacity: 1; }
+            100% { transform: scale(1) rotate(0deg); opacity: 1; }
+        }
+        .rail-check-pop {
+            animation: railCheckPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        @keyframes rollModalEnter {
+            0% { opacity: 0; transform: scale(0.92) translateY(12px); }
+            100% { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        .roll-modal-enter {
+            animation: rollModalEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes missionPanelEnter {
+            0% { opacity: 0; transform: translateX(24px); }
+            100% { opacity: 1; transform: translateX(0); }
+        }
+        .mission-panel-enter {
+            animation: missionPanelEnter 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes continuePulse {
+            0%, 100% { box-shadow: 0 8px 24px rgba(16,185,129,0.35); }
+            50% { box-shadow: 0 8px 32px rgba(16,185,129,0.6); }
+        }
+        .continue-pulse {
+            animation: continuePulse 1.6s ease-in-out infinite;
         }
     </style>
 </head>
@@ -588,7 +628,7 @@
         // Gemini (or any capable model) along with a screenshot of the car,
         // and it should hand back a JSON block this app can parse straight
         // into a new fleet vehicle.
-        const AI_IMPORT_PROMPT = `You are helping fill out a car database entry for a Roblox Greenville-based garage tracker app. I will give you the car's name/model/trim/year and a picture of it from the game. Using the image and your knowledge of this vehicle (or its closest real-world equivalent), respond with ONLY a raw JSON object -- no markdown, no code fences, no explanation before or after -- with exactly these fields:
+        const AI_IMPORT_PROMPT = `You are helping fill out a car database entry for a Roblox Greenville-based garage tracker app. I will give you the car's name/model/trim/year and a screenshot of it from the game (usually the in-game garage/dealership screen, which often shows the odometer mileage and any "Limited"/"Off-Sale"/"Collectible"/"Event" badge on it). Using the image and your knowledge of this vehicle (or its closest real-world equivalent), respond with ONLY a raw JSON object -- no markdown, no code fences, no explanation before or after -- with exactly these fields:
 
 {
   "year": <number>,
@@ -598,6 +638,8 @@
   "topSpeed": <number, mph>,
   "horsepower": <number>,
   "cost": <number, USD buy price>,
+  "miles": <number, the odometer/mileage reading EXACTLY as shown in the screenshot's UI -- if no mileage is visible in the image, use 0>,
+  "tags": [<zero or more of exactly: "Limited", "Off-Sale", "Collectible", "Event" -- only include ones you can actually see badged on the car in the screenshot, otherwise return an empty array>],
   "type": "<one of exactly: Sedan, Ute, Coupe, Hatchback, Emergency, Limousine, SUV, Minivan, Truck, Convertible, Van, Wagon, Motorhome, Other>",
   "pass": "<one of exactly: No Pass, Luxury, Public Services, Sports, Zero Emissions, Classic>",
   "zeroToSixty": <number, seconds, e.g. 3.8>,
@@ -613,7 +655,7 @@
   "transmission": "<one of exactly: Auto, Auto + Semi, Auto + Semi + Manual, Auto + Manual>"
 }
 
-Only use the exact allowed values listed for type, pass, fuel, and transmission -- don't invent new categories. If you're unsure about a value, give your best realistic estimate instead of leaving it blank. Respond with the JSON object only, nothing else.`;
+Only use the exact allowed values listed for type, pass, fuel, transmission, and tags -- don't invent new categories. For miles and tags specifically, only report what's actually visible in the screenshot -- don't guess or invent a mileage/badge that isn't shown. For every other field, if you're unsure, give your best realistic estimate instead of leaving it blank. Respond with the JSON object only, nothing else.`;
 
         // Material Symbols icon name for each spec field, used in the
         // Performance Specs panel and the add/edit form.
@@ -1372,6 +1414,11 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
 
             // Filtering query boundaries
             const [bveSearch, setBveSearch] = useState('');
+            const [debouncedBveSearch, setDebouncedBveSearch] = useState('');
+            useEffect(() => {
+                const t = setTimeout(() => setDebouncedBveSearch(bveSearch), 200);
+                return () => clearTimeout(t);
+            }, [bveSearch]);
             const [bveLevelFilter, setBveLevelFilter] = useState('All');
             const [activeServer, setActiveServer] = useState(() => {
                 try {
@@ -1381,6 +1428,11 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                 }
             });
             const [garageSearch, setGarageSearch] = useState('');
+            const [debouncedGarageSearch, setDebouncedGarageSearch] = useState('');
+            useEffect(() => {
+                const t = setTimeout(() => setDebouncedGarageSearch(garageSearch), 200);
+                return () => clearTimeout(t);
+            }, [garageSearch]);
             const [garageSortBy, setGarageSortBy] = useState('Year');
             const [sortDirection, setSortDirection] = useState('desc');
             const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
@@ -2042,9 +2094,15 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
             const getColorFamily = (colorInput) => {
                 const { r, g, b } = resolveRawRGB(colorInput);
                 const { h, s, l } = rgbToHsl(r, g, b);
+                // Chroma (max-min RGB channel spread) is a more reliable "is this
+                // actually a neutral gray" test than HSL saturation -- saturation
+                // math gets distorted for darker/lighter colors and was letting
+                // real automotive grays (which often have a faint cool/warm cast)
+                // slip through and get classified as Blue/etc instead of Gray.
+                const chroma = Math.max(r, g, b) - Math.min(r, g, b);
                 if (l < 14) return 'Black';
-                if (l > 90 && s < 15) return 'White';
-                if (s < 14) return 'Gray';
+                if (l > 90 && chroma < 20) return 'White';
+                if (chroma < 26) return 'Gray';
                 if (h < 15 || h >= 345) return 'Red';
                 if (h < 45) return 'Orange';
                 if (h < 70) return 'Yellow';
@@ -2096,6 +2154,16 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                 if (rawCost <= 0) return 0;
                 const mileageFactor = Math.max(0.55, 0.85 - (rawMiles * 0.000015));
                 return Math.round(rawCost * mileageFactor);
+            };
+
+            // Car Mastery: 250 XP per level, earned by completing missions
+            // rolled for that specific car.
+            const MASTERY_XP_PER_LEVEL = 250;
+            const getMasteryLevel = (xp) => {
+                const total = Number(xp) || 0;
+                const level = Math.floor(total / MASTERY_XP_PER_LEVEL) + 1;
+                const xpIntoLevel = total % MASTERY_XP_PER_LEVEL;
+                return { level, xpIntoLevel, xpPerLevel: MASTERY_XP_PER_LEVEL, progress: xpIntoLevel / MASTERY_XP_PER_LEVEL, total };
             };
 
             const handleOpenAdd = () => {
@@ -2191,6 +2259,7 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                 }
 
                 const safeEnum = (value, allowed, fallback) => allowed.includes(value) ? value : fallback;
+                const validTags = ["Limited", "Off-Sale", "Collectible", "Event"];
 
                 setCurrentCar(prev => ({
                     ...prev,
@@ -2201,6 +2270,8 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                     topSpeed: parsed.topSpeed ?? prev.topSpeed,
                     horsepower: parsed.horsepower ?? prev.horsepower,
                     cost: parsed.cost ?? prev.cost,
+                    miles: parsed.miles ?? prev.miles,
+                    tags: Array.isArray(parsed.tags) ? parsed.tags.filter(t => validTags.includes(t)) : (prev.tags || []),
                     type: safeEnum(parsed.type, CAR_TYPES, prev.type),
                     pass: safeEnum(parsed.pass, CAR_PASSES, prev.pass),
                     zeroToSixty: parsed.zeroToSixty ?? prev.zeroToSixty,
@@ -2326,11 +2397,11 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
             // Filters logic for lists
             const filteredBve = useMemo(() => {
                 return BANNED_DATABASES[activeServer].filter(car => {
-                    const matchesSearch = car.name.toLowerCase().includes(bveSearch.toLowerCase());
+                    const matchesSearch = car.name.toLowerCase().includes(debouncedBveSearch.toLowerCase());
                     const matchesLevel = bveLevelFilter === 'All' || car.level.toLowerCase() === bveLevelFilter.toLowerCase();
                     return matchesSearch && matchesLevel;
                 });
-            }, [bveSearch, bveLevelFilter, activeServer]);
+            }, [debouncedBveSearch, bveLevelFilter, activeServer]);
 
             const sortedGarage = useMemo(() => {
                 let result = garage.filter(car => {
@@ -2339,7 +2410,7 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                     const trimStr = car.trim || "";
                     const query = `${car.year || ''} ${brandStr} ${modelStr} ${trimStr}`.toLowerCase();
                     
-                    const matchesSearch = query.includes(garageSearch.toLowerCase());
+                    const matchesSearch = query.includes(debouncedGarageSearch.toLowerCase());
                     const matchesFavorite = !showOnlyFavorites || car.favorite;
 
                     let matchesColor = true;
@@ -2390,7 +2461,7 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
 
                     return sortDirection === 'desc' ? (valA < valB ? 1 : -1) : (valA > valB ? 1 : -1);
                 });
-            }, [garage, garageSearch, garageSortBy, sortDirection, showOnlyFavorites, colorFilter, levelFilter, activeServer, palette, typeFilter, passFilter]);
+            }, [garage, debouncedGarageSearch, garageSortBy, sortDirection, showOnlyFavorites, colorFilter, levelFilter, activeServer, palette, typeFilter, passFilter]);
 
             const handleDeleteAll = async () => {
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'okgarage-mini-app';
@@ -3368,7 +3439,7 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                     {isNewMissionRolling && (
                         <div className="fixed inset-0 z-[170] flex items-center justify-center p-6">
                             <div className="absolute inset-0 bg-black/90 backdrop-blur-sm" />
-                            <div className="relative bg-[#121318] border border-white/10 rounded-3xl w-full max-w-3xl p-10 shadow-[0_24px_80px_rgba(0,0,0,0.9)] flex flex-col items-center gap-8">
+                            <div className="relative bg-[#121318] border border-white/10 rounded-3xl w-full max-w-3xl p-10 shadow-[0_24px_80px_rgba(0,0,0,0.9)] flex flex-col items-center gap-8 roll-modal-enter">
                                 <h3 className="text-lg font-black font-['Montserrat'] text-center">Rolling your mission...</h3>
 
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 w-full">
@@ -3382,15 +3453,20 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                                         return (
                                             <div 
                                                 key={label} 
-                                                className={`relative bg-black/40 border rounded-2xl p-4 flex flex-col items-center gap-2 h-28 justify-center overflow-hidden transition-all duration-300 ${isSettled ? 'rail-settled border-emerald-500/50' : 'border-white/[0.08]'}`}
+                                                className={`relative bg-black/40 border rounded-2xl p-4 flex flex-col items-center gap-2 h-28 justify-center overflow-hidden transition-all duration-500 ${isSettled ? 'rail-settled rail-settle-bounce border-emerald-500/50' : 'border-white/[0.08]'}`}
                                             >
                                                 {isSettled && (
-                                                    <span className="material-symbols-outlined absolute top-2 right-2 text-[14px] text-emerald-400">check_circle</span>
+                                                    <span className="material-symbols-outlined absolute top-2 right-2 text-[14px] text-emerald-400 rail-check-pop">check_circle</span>
                                                 )}
                                                 <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider font-sans">{label}</span>
-                                                <span className={`text-xs font-black text-center font-sans leading-tight px-1 ${rail.spinning ? 'text-white/50 rail-spinning-text' : 'text-white'}`}>
-                                                    {rail.display || '—'}
-                                                </span>
+                                                <div className="w-full h-8 flex items-center justify-center overflow-hidden relative">
+                                                    <span 
+                                                        key={`${rail.display}-${rail.spinning}`}
+                                                        className={`text-xs font-black text-center font-sans leading-tight px-1 block rail-tumble ${rail.spinning ? 'text-white/60' : 'text-white'}`}
+                                                    >
+                                                        {rail.display || '—'}
+                                                    </span>
+                                                </div>
                                             </div>
                                         );
                                     })}
@@ -3399,7 +3475,7 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                                 {rollComplete ? (
                                     <button
                                         onClick={handleContinueMission}
-                                        className="h-12 px-8 rounded-full bg-gradient-to-b from-emerald-400 to-emerald-600 hover:from-emerald-300 hover:to-emerald-500 text-black text-sm font-black transition-all animate-[loadingFadeOut_0.4s_ease-out_reverse] shadow-[0_8px_24px_rgba(16,185,129,0.35)]"
+                                        className="h-12 px-8 rounded-full bg-gradient-to-b from-emerald-400 to-emerald-600 hover:from-emerald-300 hover:to-emerald-500 text-black text-sm font-black transition-all animate-[loadingFadeOut_0.4s_ease-out_reverse] continue-pulse"
                                     >
                                         Continue
                                     </button>
@@ -3547,7 +3623,7 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                                                         className="group relative rounded-2xl p-5 border transition-all card-transition h-[340px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer staggered-card card-glow-hover"
                                                         onClick={() => handleOpenGallery(ownedCar)}
                                                     >
-                                                        <AmbientSpheres colorRGB={spec.rawRGB} count={5} intensify={isHovered} />
+                                                        <AmbientSpheres colorRGB={spec.rawRGB} count={3} intensify={isHovered} />
                                                         <div className="card-glow-overlay" style={{ background: `radial-gradient(circle at 50% 50%, rgba(${spec.rawRGB}, 0.85) 0%, rgba(${spec.rawRGB}, 0.35) 35%, transparent 70%)` }} />
 
                                                         <div className="relative z-10 pr-1">
@@ -3628,6 +3704,18 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                                                                         <span className="text-[9px] text-white/20 italic">No tags</span>
                                                                     )}
                                                                 </div>
+                                                                {(() => {
+                                                                    const mastery = getMasteryLevel(ownedCar.masteryXp);
+                                                                    return (
+                                                                        <div className="relative h-4 px-2 rounded-full overflow-hidden border border-white/10 bg-black/40 flex items-center shrink-0 ml-2" style={{ minWidth: '46px' }}>
+                                                                            <div 
+                                                                                className="absolute inset-y-0 left-0 transition-all duration-500"
+                                                                                style={{ width: `${mastery.progress * 100}%`, background: `linear-gradient(90deg, rgba(${spec.rawRGB},0.2), rgba(${spec.rawRGB},0.75))` }}
+                                                                            />
+                                                                            <span className="relative z-10 text-[8px] font-black text-white whitespace-nowrap">LVL {mastery.level}</span>
+                                                                        </div>
+                                                                    );
+                                                                })()}
                                                             </div>
                                                         </div>
                                                     </div>
@@ -3872,7 +3960,7 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                                                     style={{ background: spec.gradient, borderColor: spec.border, animationDelay: `${gridIndex * 25}ms`, '--glow-rgb': spec.rawRGB }}
                                                     className="group relative rounded-2xl p-5 border transition-all card-transition h-[340px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer staggered-card card-glow-hover"
                                                 >
-                                                    <AmbientSpheres colorRGB={spec.rawRGB} count={6} intensify={isHovered} />
+                                                    <AmbientSpheres colorRGB={spec.rawRGB} count={3} intensify={isHovered} />
                                                     <div className="card-glow-overlay" style={{ background: `radial-gradient(circle at 50% 50%, rgba(${spec.rawRGB}, 0.85) 0%, rgba(${spec.rawRGB}, 0.35) 35%, transparent 70%)` }} />
 
                                                     <div className="relative z-10 pr-1">
@@ -3953,12 +4041,26 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                                                                     <span className="text-[9px] text-white/20 italic font-sans">No tags</span>
                                                                 )}
                                                             </div>
-                                                            {car.favorite && (
-                                                                <span 
-                                                                    className={`material-symbols-outlined text-[13px] text-[#ffd60a] transition-opacity duration-300 ease-out ${isHovered ? 'opacity-100' : 'opacity-0'}`} 
-                                                                    style={{ fontVariationSettings: "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24" }}
-                                                                >{SPEC_ICONS.favorite}</span>
-                                                            )}
+                                                            <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                                                                {car.favorite && (
+                                                                    <span 
+                                                                        className={`material-symbols-outlined text-[13px] text-[#ffd60a] transition-opacity duration-300 ease-out ${isHovered ? 'opacity-100' : 'opacity-0'}`} 
+                                                                        style={{ fontVariationSettings: "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24" }}
+                                                                    >{SPEC_ICONS.favorite}</span>
+                                                                )}
+                                                                {(() => {
+                                                                    const mastery = getMasteryLevel(car.masteryXp);
+                                                                    return (
+                                                                        <div className="relative h-4 px-2 rounded-full overflow-hidden border border-white/10 bg-black/40 flex items-center shrink-0" style={{ minWidth: '46px' }}>
+                                                                            <div 
+                                                                                className="absolute inset-y-0 left-0 transition-all duration-500"
+                                                                                style={{ width: `${mastery.progress * 100}%`, background: `linear-gradient(90deg, rgba(${spec.rawRGB},0.2), rgba(${spec.rawRGB},0.75))` }}
+                                                                            />
+                                                                            <span className="relative z-10 text-[8px] font-black text-white whitespace-nowrap font-sans">LVL {mastery.level}</span>
+                                                                        </div>
+                                                                    );
+                                                                })()}
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -4015,12 +4117,37 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                                 <AmbientSpheres colorRGB={gallerySpec.rawRGB} count={16} />
                             </div>
 
+                            {/* Mastery XP bar -- sits above everything else in this view */}
+                            {(() => {
+                                const mastery = getMasteryLevel(selectedGalleryCar.masteryXp);
+                                return (
+                                    <div className="w-full h-1.5 bg-black/60 relative z-10 shrink-0 overflow-hidden">
+                                        <div 
+                                            className="h-full transition-all duration-700 ease-out"
+                                            style={{ width: `${mastery.progress * 100}%`, background: `linear-gradient(90deg, rgba(${gallerySpec.rawRGB},0.5), rgba(${gallerySpec.rawRGB},1))` }}
+                                        />
+                                    </div>
+                                );
+                            })()}
+
                             <header className="w-full px-12 py-6 border-b border-b-white/[0.05] flex justify-between items-center z-10 relative bg-[#07080b]/40 backdrop-blur-md">
                                 <div className="flex items-center gap-4">
                                     {/* Symmetrical Header Typography mapping year and model font sizing identically */}
                                     <h3 className="text-2xl font-black font-['Montserrat'] tracking-tight text-white leading-none">
                                         {selectedGalleryCar.year} {selectedGalleryCar.brand} {selectedGalleryCar.modelName}
                                     </h3>
+                                    {(() => {
+                                        const mastery = getMasteryLevel(selectedGalleryCar.masteryXp);
+                                        return (
+                                            <div className="relative h-6 px-3 rounded-full overflow-hidden border border-white/10 bg-black/40 flex items-center shrink-0" style={{ minWidth: '80px' }}>
+                                                <div 
+                                                    className="absolute inset-y-0 left-0 transition-all duration-500"
+                                                    style={{ width: `${mastery.progress * 100}%`, background: `linear-gradient(90deg, rgba(${gallerySpec.rawRGB},0.2), rgba(${gallerySpec.rawRGB},0.8))` }}
+                                                />
+                                                <span className="relative z-10 text-[10px] font-black text-white whitespace-nowrap font-sans">LVL {mastery.level} · {mastery.xpIntoLevel}/{mastery.xpPerLevel} XP</span>
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                                 <button 
                                     onClick={handleCloseGallery}
@@ -4217,9 +4344,23 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                                                             <span className="text-[10px] text-white/20 italic font-sans">No tags</span>
                                                         )}
                                                     </div>
-                                                    {selectedGalleryCar.favorite && (
-                                                        <span className="material-symbols-outlined text-[14px] text-[#ffd60a]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24" }}>{SPEC_ICONS.favorite}</span>
-                                                    )}
+                                                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                                                        {selectedGalleryCar.favorite && (
+                                                            <span className="material-symbols-outlined text-[14px] text-[#ffd60a]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24" }}>{SPEC_ICONS.favorite}</span>
+                                                        )}
+                                                        {(() => {
+                                                            const mastery = getMasteryLevel(selectedGalleryCar.masteryXp);
+                                                            return (
+                                                                <div className="relative h-5 px-2.5 rounded-full overflow-hidden border border-white/10 bg-black/40 flex items-center shrink-0" style={{ minWidth: '54px' }}>
+                                                                    <div 
+                                                                        className="absolute inset-y-0 left-0 transition-all duration-500"
+                                                                        style={{ width: `${mastery.progress * 100}%`, background: `linear-gradient(90deg, rgba(${gallerySpec.rawRGB},0.2), rgba(${gallerySpec.rawRGB},0.75))` }}
+                                                                    />
+                                                                    <span className="relative z-10 text-[9px] font-black text-white whitespace-nowrap font-sans">LVL {mastery.level}</span>
+                                                                </div>
+                                                            );
+                                                        })()}
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
@@ -4233,7 +4374,7 @@ Only use the exact allowed values listed for type, pass, fuel, and transmission 
                                                 borderColor: gallerySpec.border,
                                                 '--glow-rgb': gallerySpec.rawRGB
                                             }}
-                                            className="w-full lg:w-[34%] border p-6 rounded-3xl flex flex-col gap-5 relative"
+                                            className="w-full lg:w-[34%] border p-6 rounded-3xl flex flex-col gap-5 relative mission-panel-enter"
                                         >
                                             <div className="flex items-center gap-2 relative z-10">
                                                 <img src={MISSION_ICON_URL} alt="" className="w-4 h-4 object-contain opacity-70" style={{ filter: 'brightness(0) invert(1)' }} />
