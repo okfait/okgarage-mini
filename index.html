@@ -204,6 +204,13 @@
         .continue-pulse {
             animation: continuePulse 1.6s ease-in-out infinite;
         }
+        @keyframes masteryPillGlow {
+            0% { box-shadow: 0 0 0 0 rgba(255,255,255,0.5), inset 0 0 20px rgba(255,255,255,0.3); }
+            100% { box-shadow: 0 0 24px 4px rgba(255,255,255,0), inset 0 0 30px rgba(255,255,255,0); }
+        }
+        .mastery-pill-glow {
+            animation: masteryPillGlow 0.55s ease-out;
+        }
     </style>
 </head>
 <body>
@@ -1410,7 +1417,6 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
             // Layout split parameters
             const [splitOffset, setSplitOffset] = useState(50);
-            const [isDragging, setIsDragging] = useState(false);
 
             // Filtering query boundaries
             const [bveSearch, setBveSearch] = useState('');
@@ -1467,6 +1473,8 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
             // Stop watch states
             const [isLapRunning, setIsLapRunning] = useState(false);
+            const masteryPillRef = useRef(null);
+            const [pillGlowing, setPillGlowing] = useState(false);
             const [lapTime, setLapTime] = useState(0);
             const lapTimerRef = useRef(null);
 
@@ -1795,9 +1803,14 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 }, 3000);
             };
 
-            const handleMouseDown = (e) => {
-                e.preventDefault();
-                setIsDragging(true);
+            const SPLIT_STOPS = [0, 50, 100];
+            const handleStepSplitRight = () => {
+                const next = SPLIT_STOPS.find(s => s > splitOffset);
+                setSplitOffset(next !== undefined ? next : SPLIT_STOPS[SPLIT_STOPS.length - 1]);
+            };
+            const handleStepSplitLeft = () => {
+                const prev = [...SPLIT_STOPS].reverse().find(s => s < splitOffset);
+                setSplitOffset(prev !== undefined ? prev : SPLIT_STOPS[0]);
             };
 
             useEffect(() => {
@@ -1809,46 +1822,6 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     window.removeEventListener('click', handleGlobalClickAway);
                 };
             }, []);
-
-            useEffect(() => {
-                let rafId = null;
-                let pendingPct = null;
-
-                const applyPct = () => {
-                    if (pendingPct !== null) {
-                        setSplitOffset(pendingPct);
-                        pendingPct = null;
-                    }
-                    rafId = null;
-                };
-
-                const handleMouseMove = (e) => {
-                    if (!isDragging) return;
-                    const rect = document.body.getBoundingClientRect();
-                    let pct = (e.clientX / rect.width) * 100;
-                    if (pct < 5) pct = 0; 
-                    if (pct > 95) pct = 100; 
-                    pendingPct = pct;
-                    if (rafId === null) {
-                        rafId = requestAnimationFrame(applyPct);
-                    }
-                };
-
-                const handleMouseUp = () => {
-                    setIsDragging(false);
-                };
-
-                if (isDragging) {
-                    window.addEventListener('mousemove', handleMouseMove);
-                    window.addEventListener('mouseup', handleMouseUp);
-                }
-
-                return () => {
-                    window.removeEventListener('mousemove', handleMouseMove);
-                    window.removeEventListener('mouseup', handleMouseUp);
-                    if (rafId !== null) cancelAnimationFrame(rafId);
-                };
-            }, [isDragging]);
 
             // ---------------------------------------------------------------------
             // Fuzzy name matching for the BVE registry.
@@ -2613,6 +2586,68 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             // completes, whatever kind it was).
             const awardMissionXp = (carId, xpAmount) => {
                 setGarage(prev => prev.map(c => c.id === carId ? { ...c, masteryXp: (c.masteryXp || 0) + xpAmount } : c));
+            };
+
+            // Particle burst that scatters outward from wherever the
+            // completion button was clicked, then "magnets" each particle
+            // toward the mastery pill in the header. Pure imperative DOM/Web
+            // Animations API work -- not React state -- since this is a
+            // one-off visual effect, not something that needs to persist or
+            // re-render.
+            const spawnXpBurst = (originEl, colorRGB) => {
+                if (!originEl || !masteryPillRef.current) return;
+                const originRect = originEl.getBoundingClientRect();
+                const targetRect = masteryPillRef.current.getBoundingClientRect();
+                const originX = originRect.left + originRect.width / 2;
+                const originY = originRect.top + originRect.height / 2;
+                const targetX = targetRect.left + targetRect.width / 2;
+                const targetY = targetRect.top + targetRect.height / 2;
+
+                const particleCount = 16;
+                let landed = 0;
+
+                for (let i = 0; i < particleCount; i++) {
+                    const el = document.createElement('div');
+                    el.style.position = 'fixed';
+                    el.style.left = `${originX}px`;
+                    el.style.top = `${originY}px`;
+                    el.style.width = '7px';
+                    el.style.height = '7px';
+                    el.style.borderRadius = '50%';
+                    el.style.background = `rgb(${colorRGB})`;
+                    el.style.boxShadow = `0 0 10px rgba(${colorRGB},0.9)`;
+                    el.style.zIndex = '9999';
+                    el.style.pointerEvents = 'none';
+                    document.body.appendChild(el);
+
+                    const burstAngle = Math.random() * Math.PI * 2;
+                    const burstDist = 35 + Math.random() * 45;
+                    const burstX = Math.cos(burstAngle) * burstDist;
+                    const burstY = Math.sin(burstAngle) * burstDist;
+                    const dx = targetX - originX;
+                    const dy = targetY - originY;
+                    const duration = 650 + Math.random() * 250;
+                    const delay = Math.random() * 140;
+
+                    const anim = el.animate([
+                        { transform: 'translate(-50%, -50%) scale(0.6)', opacity: 0, offset: 0 },
+                        { transform: `translate(calc(-50% + ${burstX}px), calc(-50% + ${burstY}px)) scale(1.15)`, opacity: 1, offset: 0.3 },
+                        { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.25)`, opacity: 0.9, offset: 1 }
+                    ], {
+                        duration,
+                        delay,
+                        easing: 'cubic-bezier(0.32, 0, 0.24, 1)',
+                        fill: 'forwards'
+                    });
+                    anim.onfinish = () => {
+                        el.remove();
+                        landed++;
+                        if (landed === 1) {
+                            setPillGlowing(true);
+                            setTimeout(() => setPillGlowing(false), 550);
+                        }
+                    };
+                }
             };
 
             const handleMissionTimerToggle = (mission) => {
@@ -3525,7 +3560,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
                     {/* Symmetrical split layout workspace */}
                     <div 
-                        className="flex-1 w-full max-w-[1720px] mx-auto px-10 pb-10 grid relative select-none min-h-0 animate-fade-in"
+                        className="flex-1 w-full max-w-[1720px] mx-auto px-10 pb-10 grid relative select-none min-h-0 animate-fade-in transition-[grid-template-columns] duration-500 ease-out"
                         style={gridStyle}
                     >
                         
@@ -3707,12 +3742,12 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                                 {(() => {
                                                                     const mastery = getMasteryLevel(ownedCar.masteryXp);
                                                                     return (
-                                                                        <div className="relative h-4 px-2 rounded-full overflow-hidden border border-white/10 bg-black/40 flex items-center shrink-0 ml-2" style={{ minWidth: '46px' }}>
+                                                                        <div className="relative h-[18px] px-3 rounded-full overflow-hidden border border-white/10 bg-black/40 flex items-center shrink-0 ml-2" style={{ minWidth: '68px' }}>
                                                                             <div 
                                                                                 className="absolute inset-y-0 left-0 transition-all duration-500"
                                                                                 style={{ width: `${mastery.progress * 100}%`, background: `linear-gradient(90deg, rgba(${spec.rawRGB},0.2), rgba(${spec.rawRGB},0.75))` }}
                                                                             />
-                                                                            <span className="relative z-10 text-[8px] font-black text-white whitespace-nowrap">LVL {mastery.level}</span>
+                                                                            <span className="relative z-10 text-[9px] font-black text-white whitespace-nowrap mx-auto">LVL {mastery.level}</span>
                                                                         </div>
                                                                     );
                                                                 })()}
@@ -3750,16 +3785,31 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                             </div>
                         )}
 
-                        {/* SPLIT SCREEN DRAGGABLE ANCHOR BAR */}
+                        {/* SPLIT SCREEN STEP CONTROLS -- click to cycle instead of drag (dragging re-rendered every card on every pixel of movement and was the main lag source here) */}
                         <div 
-                            onMouseDown={handleMouseDown}
                             style={{ gridColumn: '2' }}
-                            className="h-full flex items-center justify-center cursor-col-resize select-none relative z-50 w-2.5"
+                            className="h-full flex flex-col items-center justify-center select-none relative z-50 w-2.5 gap-2"
                         >
-                            <div className={`w-[2px] h-[95%] bg-white/[0.08] hover:bg-emerald-500/50 transition-all ${isDragging ? 'bg-emerald-500' : ''}`} />
-                            <div className="absolute w-4 h-8 bg-[#181a22] border border-white/15 rounded-full flex items-center justify-center shadow-xl">
-                                <span className="text-[8px] text-white/50">||</span>
+                            <div className="w-[2px] flex-1 bg-white/[0.08]" />
+                            <div className="flex flex-col gap-1.5">
+                                <button
+                                    onClick={handleStepSplitRight}
+                                    disabled={splitOffset >= 100}
+                                    title="Shift right (more room for BVE Registry)"
+                                    className="w-6 h-6 rounded-full bg-[#181a22] border border-white/15 hover:border-emerald-500/50 hover:bg-emerald-500/10 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center shadow-xl transition-all"
+                                >
+                                    <span className="material-symbols-outlined text-[12px] text-white/70">chevron_right</span>
+                                </button>
+                                <button
+                                    onClick={handleStepSplitLeft}
+                                    disabled={splitOffset <= 0}
+                                    title="Shift left (more room for My Garage)"
+                                    className="w-6 h-6 rounded-full bg-[#181a22] border border-white/15 hover:border-emerald-500/50 hover:bg-emerald-500/10 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center shadow-xl transition-all"
+                                >
+                                    <span className="material-symbols-outlined text-[12px] text-white/70">chevron_left</span>
+                                </button>
                             </div>
+                            <div className="w-[2px] flex-1 bg-white/[0.08]" />
                         </div>
 
                         {/* RIGHT GRID PANEL: USER OWNED GARAGE FLEET */}
@@ -4051,12 +4101,12 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                                 {(() => {
                                                                     const mastery = getMasteryLevel(car.masteryXp);
                                                                     return (
-                                                                        <div className="relative h-4 px-2 rounded-full overflow-hidden border border-white/10 bg-black/40 flex items-center shrink-0" style={{ minWidth: '46px' }}>
+                                                                        <div className="relative h-[18px] px-3 rounded-full overflow-hidden border border-white/10 bg-black/40 flex items-center shrink-0" style={{ minWidth: '68px' }}>
                                                                             <div 
                                                                                 className="absolute inset-y-0 left-0 transition-all duration-500"
                                                                                 style={{ width: `${mastery.progress * 100}%`, background: `linear-gradient(90deg, rgba(${spec.rawRGB},0.2), rgba(${spec.rawRGB},0.75))` }}
                                                                             />
-                                                                            <span className="relative z-10 text-[8px] font-black text-white whitespace-nowrap font-sans">LVL {mastery.level}</span>
+                                                                            <span className="relative z-10 text-[9px] font-black text-white whitespace-nowrap mx-auto font-sans">LVL {mastery.level}</span>
                                                                         </div>
                                                                     );
                                                                 })()}
@@ -4130,28 +4180,25 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                 );
                             })()}
 
-                            <header className="w-full px-12 py-6 border-b border-b-white/[0.05] flex justify-between items-center z-10 relative bg-[#07080b]/40 backdrop-blur-md">
-                                <div className="flex items-center gap-4">
-                                    {/* Symmetrical Header Typography mapping year and model font sizing identically */}
-                                    <h3 className="text-2xl font-black font-['Montserrat'] tracking-tight text-white leading-none">
-                                        {selectedGalleryCar.year} {selectedGalleryCar.brand} {selectedGalleryCar.modelName}
-                                    </h3>
-                                    {(() => {
-                                        const mastery = getMasteryLevel(selectedGalleryCar.masteryXp);
-                                        return (
-                                            <div className="relative h-6 px-3 rounded-full overflow-hidden border border-white/10 bg-black/40 flex items-center shrink-0" style={{ minWidth: '80px' }}>
-                                                <div 
-                                                    className="absolute inset-y-0 left-0 transition-all duration-500"
-                                                    style={{ width: `${mastery.progress * 100}%`, background: `linear-gradient(90deg, rgba(${gallerySpec.rawRGB},0.2), rgba(${gallerySpec.rawRGB},0.8))` }}
-                                                />
-                                                <span className="relative z-10 text-[10px] font-black text-white whitespace-nowrap font-sans">LVL {mastery.level} · {mastery.xpIntoLevel}/{mastery.xpPerLevel} XP</span>
-                                            </div>
-                                        );
-                                    })()}
-                                </div>
+                            <header className="w-full px-12 py-6 border-b border-b-white/[0.05] flex justify-between items-center gap-6 z-10 relative bg-[#07080b]/40 backdrop-blur-md">
+                                <h3 className="text-2xl font-black font-['Montserrat'] tracking-tight text-white leading-none shrink-0">
+                                    {selectedGalleryCar.year} {selectedGalleryCar.brand} {selectedGalleryCar.modelName}
+                                </h3>
+                                {(() => {
+                                    const mastery = getMasteryLevel(selectedGalleryCar.masteryXp);
+                                    return (
+                                        <div ref={masteryPillRef} className={`relative h-8 px-4 rounded-full overflow-hidden border flex-1 flex items-center transition-shadow duration-500 ${pillGlowing ? 'border-white/40 mastery-pill-glow' : 'border-white/10'}`} style={{ background: 'rgba(0,0,0,0.4)' }}>
+                                            <div 
+                                                className="absolute inset-y-0 left-0 transition-all duration-500"
+                                                style={{ width: `${mastery.progress * 100}%`, background: `linear-gradient(90deg, rgba(${gallerySpec.rawRGB},0.25), rgba(${gallerySpec.rawRGB},0.85))` }}
+                                            />
+                                            <span className="relative z-10 text-[11px] font-black text-white whitespace-nowrap font-sans mx-auto">LVL {mastery.level} · {mastery.xpIntoLevel}/{mastery.xpPerLevel} XP</span>
+                                        </div>
+                                    );
+                                })()}
                                 <button 
                                     onClick={handleCloseGallery}
-                                    className="h-11 px-5 rounded-full bg-white/5 hover:bg-white/10 text-white/80 hover:text-white border border-white/10 font-bold transition-all flex items-center gap-2 font-sans text-xs"
+                                    className="h-11 px-5 rounded-full bg-white/5 hover:bg-white/10 text-white/80 hover:text-white border border-white/10 font-bold transition-all flex items-center gap-2 font-sans text-xs shrink-0"
                                 >
                                     <span className="material-symbols-outlined text-[14px]" style={{ transform: 'rotate(180deg)' }}>{SPEC_ICONS.back}</span>
                                     Back
@@ -4348,18 +4395,6 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                         {selectedGalleryCar.favorite && (
                                                             <span className="material-symbols-outlined text-[14px] text-[#ffd60a]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24" }}>{SPEC_ICONS.favorite}</span>
                                                         )}
-                                                        {(() => {
-                                                            const mastery = getMasteryLevel(selectedGalleryCar.masteryXp);
-                                                            return (
-                                                                <div className="relative h-5 px-2.5 rounded-full overflow-hidden border border-white/10 bg-black/40 flex items-center shrink-0" style={{ minWidth: '54px' }}>
-                                                                    <div 
-                                                                        className="absolute inset-y-0 left-0 transition-all duration-500"
-                                                                        style={{ width: `${mastery.progress * 100}%`, background: `linear-gradient(90deg, rgba(${gallerySpec.rawRGB},0.2), rgba(${gallerySpec.rawRGB},0.75))` }}
-                                                                    />
-                                                                    <span className="relative z-10 text-[9px] font-black text-white whitespace-nowrap font-sans">LVL {mastery.level}</span>
-                                                                </div>
-                                                            );
-                                                        })()}
                                                     </div>
                                                 </div>
                                             </div>
@@ -4443,7 +4478,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
                                                 {galleryMissionType.kind === 'manual' && (
                                                     <button
-                                                        onClick={() => handleCompleteMission(galleryMission.id)}
+                                                        onClick={(e) => { spawnXpBurst(e.currentTarget, gallerySpec.rawRGB); handleCompleteMission(galleryMission.id); }}
                                                         className="w-full py-2.5 rounded-xl bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-black text-[11px] font-black uppercase tracking-wider transition-all font-sans shadow-[0_4px_16px_rgba(16,185,129,0.3)]"
                                                     >
                                                         {galleryMissionType.actionLabel}
@@ -4456,7 +4491,11 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                             {galleryMission.progress || 0} / {galleryMissionType.getTarget(galleryMission.params || {})}
                                                         </span>
                                                         <button
-                                                            onClick={() => handleIncrementCounterMission(galleryMission)}
+                                                            onClick={(e) => {
+                                                                const willComplete = (galleryMission.progress || 0) + 1 >= galleryMissionType.getTarget(galleryMission.params || {});
+                                                                if (willComplete) spawnXpBurst(e.currentTarget, gallerySpec.rawRGB);
+                                                                handleIncrementCounterMission(galleryMission);
+                                                            }}
                                                             className="px-4 py-2.5 rounded-xl bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-black text-[11px] font-black uppercase tracking-wider transition-all font-sans shadow-[0_4px_16px_rgba(16,185,129,0.3)]"
                                                         >
                                                             {galleryMissionType.actionLabel}
@@ -4471,13 +4510,23 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                         </span>
                                                         <div className="flex items-center gap-2">
                                                             <button
-                                                                onClick={() => handleCutProgress(galleryMission, 'cut')}
+                                                                onClick={(e) => {
+                                                                    const target = galleryMissionType.getTarget(galleryMission.params || {});
+                                                                    const willComplete = (galleryMission.cutCount || 0) + 1 + (galleryMission.overtakeCount || 0) * 2 >= target;
+                                                                    if (willComplete) spawnXpBurst(e.currentTarget, gallerySpec.rawRGB);
+                                                                    handleCutProgress(galleryMission, 'cut');
+                                                                }}
                                                                 className="flex-1 py-2.5 rounded-xl bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-black text-[11px] font-black uppercase tracking-wider transition-all font-sans shadow-[0_4px_16px_rgba(16,185,129,0.3)]"
                                                             >
                                                                 Cut ({galleryMission.cutCount || 0})
                                                             </button>
                                                             <button
-                                                                onClick={() => handleCutProgress(galleryMission, 'overtake')}
+                                                                onClick={(e) => {
+                                                                    const target = galleryMissionType.getTarget(galleryMission.params || {});
+                                                                    const willComplete = (galleryMission.cutCount || 0) + ((galleryMission.overtakeCount || 0) + 1) * 2 >= target;
+                                                                    if (willComplete) spawnXpBurst(e.currentTarget, gallerySpec.rawRGB);
+                                                                    handleCutProgress(galleryMission, 'overtake');
+                                                                }}
                                                                 className="flex-1 py-2.5 rounded-xl bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-black text-[11px] font-black uppercase tracking-wider transition-all font-sans shadow-[0_4px_16px_rgba(245,158,11,0.3)]"
                                                             >
                                                                 Overtake ({galleryMission.overtakeCount || 0})
