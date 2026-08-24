@@ -64,6 +64,17 @@
             z-index: 1;
         }
 
+        /* Tells the browser to skip layout/style/paint entirely for cards
+           scrolled offscreen -- with a big garage this is the difference
+           between rendering (and running blurred ambient-sphere animations
+           for) every single card at once vs. only the ones actually visible.
+           contain-intrinsic-size reserves the card's real height so the
+           page doesn't jump around as cards enter/exit the viewport. */
+        .garage-card-cv {
+            content-visibility: auto;
+            contain-intrinsic-size: 340px 100%;
+        }
+
         /* Smooth glow + very slight zoom on car-card hover (replaces the old
            shine-sweep effect, which felt too aggressive) */
         .card-glow-hover {
@@ -1263,6 +1274,33 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             );
         };
 
+        // Racetrack stopwatch readout, isolated from the rest of the app.
+        // Ticks its own local state every 10ms while running instead of the
+        // parent App re-rendering (which used to mean the whole garage grid,
+        // every ambient-sphere animation, etc. re-rendered 100x/sec any time
+        // the stopwatch was going). Writes to liveRef each tick so the
+        // parent can read the exact current value synchronously on Stop
+        // without needing it in React state.
+        const LiveStopwatch = ({ isRunning, startRef, liveRef, frozenMs, formatLapTime }) => {
+            const [displayMs, setDisplayMs] = useState(frozenMs);
+
+            useEffect(() => {
+                if (!isRunning) setDisplayMs(frozenMs);
+            }, [frozenMs, isRunning]);
+
+            useEffect(() => {
+                if (!isRunning) return;
+                const interval = setInterval(() => {
+                    const ms = Date.now() - startRef.current;
+                    liveRef.current = ms;
+                    setDisplayMs(ms);
+                }, 10);
+                return () => clearInterval(interval);
+            }, [isRunning]);
+
+            return <span className="text-lg font-mono font-black text-white">{formatLapTime(displayMs)}</span>;
+        };
+
         // Custom-styled dropdown replacing native <select> -- native selects
         // can't be styled consistently (their open option list uses whatever
         // ugly default the OS/browser gives you), so this matches the app's
@@ -1471,12 +1509,17 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             const paletteCanvasRef = useRef(null);
             const [sampledPicData, setSampledPicData] = useState(null);
 
-            // Stop watch states
+            // Stop watch states -- lapTime only holds the FROZEN value (set on
+            // start/stop/reset). While running, the live milliseconds live in
+            // liveLapTimeRef + the isolated <LiveStopwatch> component below,
+            // so the 10ms tick doesn't re-render the whole app (it used to --
+            // that was the single biggest source of the button-press lag).
             const [isLapRunning, setIsLapRunning] = useState(false);
             const masteryPillRef = useRef(null);
             const [pillGlowing, setPillGlowing] = useState(false);
             const [lapTime, setLapTime] = useState(0);
-            const lapTimerRef = useRef(null);
+            const lapStartRef = useRef(0);
+            const liveLapTimeRef = useRef(0);
 
             // Sliding animation anchors
             const sortRefs = useRef({});
@@ -2411,12 +2454,29 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     return matchesSearch && matchesFavorite && matchesColor && matchesLevel && matchesType && matchesPass;
                 });
 
+                if (garageSortBy === 'Year') {
+                    // Cars with no year (some Greenville cars just don't have
+                    // one) always float to the top, alphabetized by name.
+                    // Once those run out, the rest sort by year using the
+                    // normal asc/desc toggle (desc = highest year first).
+                    const noYear = result.filter(c => !c.year && c.year !== 0);
+                    const hasYear = result.filter(c => c.year || c.year === 0);
+                    noYear.sort((a, b) => {
+                        const nameA = `${a.brand || ''} ${a.modelName || ''}`.toLowerCase().trim();
+                        const nameB = `${b.brand || ''} ${b.modelName || ''}`.toLowerCase().trim();
+                        return nameA > nameB ? 1 : -1;
+                    });
+                    hasYear.sort((a, b) => {
+                        const valA = Number(a.year) || 0;
+                        const valB = Number(b.year) || 0;
+                        return sortDirection === 'desc' ? (valA < valB ? 1 : -1) : (valA > valB ? 1 : -1);
+                    });
+                    return [...noYear, ...hasYear];
+                }
+
                 return result.sort((a, b) => {
                     let valA, valB;
-                    if (garageSortBy === 'Year') {
-                        valA = Number(a.year) || 0;
-                        valB = Number(b.year) || 0;
-                    } else if (garageSortBy === 'Make') {
+                    if (garageSortBy === 'Make') {
                         const makeA = a.brand || "";
                         const makeB = b.brand || "";
                         valA = makeA.toLowerCase();
@@ -2483,16 +2543,50 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 }, 300);
             };
 
+            // selectedGalleryCar is a snapshot taken when the gallery was
+            // opened, so it used to go stale the moment something else (e.g.
+            // awardMissionXp completing a mission) updated the same car
+            // inside `garage` -- the mastery pill in the detail view kept
+            // showing the OLD xp until you closed and reopened the car. Keep
+            // it glued to whatever's actually in `garage` while open.
+            useEffect(() => {
+                if (!selectedGalleryCar) return;
+                const liveCar = garage.find(c => c.id === selectedGalleryCar.id);
+                if (liveCar && liveCar !== selectedGalleryCar) {
+                    setSelectedGalleryCar(liveCar);
+                }
+            }, [garage, selectedGalleryCar]);
+
             // --- Chapter 4: mission roll sequence ---
             const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
-            const spinRailValues = async (values, onTick, spinMs = 1100, tickMs = 90) => {
+            // Real slot-reel feel: ticks start fast and progressively slow
+            // down (ease-out) as the spin runs out, like a physical reel
+            // losing momentum, instead of flickering at a flat rate and then
+            // just cutting to the answer. In the last stretch it starts
+            // showing the actual final value between random flickers so it
+            // reads as "settling onto" the result rather than jump-cutting.
+            const spinRailValues = async (values, onTick, finalValue, spinMs = 1900) => {
                 if (values.length === 0) return;
+                const minTick = 45;
+                const maxTick = 260;
                 const start = performance.now();
-                while (performance.now() - start < spinMs) {
-                    onTick(values[Math.floor(Math.random() * values.length)]);
+                let elapsed = 0;
+                while (elapsed < spinMs) {
+                    const progress = elapsed / spinMs;
+                    const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+                    const tickMs = minTick + (maxTick - minTick) * eased;
+
+                    if (finalValue !== undefined && progress > 0.72 && Math.random() < (progress - 0.72) / 0.28) {
+                        onTick(finalValue);
+                    } else {
+                        onTick(values[Math.floor(Math.random() * values.length)]);
+                    }
+
                     await sleep(tickMs);
+                    elapsed = performance.now() - start;
                 }
+                if (finalValue !== undefined) onTick(finalValue);
             };
 
             const handleStartRoll = async () => {
@@ -2508,7 +2602,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
                 // Rail 1: Randomizer
                 const finalRandomizer = MISSION_RANDOMIZER_TYPES[Math.floor(Math.random() * MISSION_RANDOMIZER_TYPES.length)];
-                await spinRailValues(MISSION_RANDOMIZER_TYPES, (v) => setRollRandomizer({ spinning: true, display: v, value: null }));
+                await spinRailValues(MISSION_RANDOMIZER_TYPES, (v) => setRollRandomizer({ spinning: true, display: v, value: null }), finalRandomizer);
                 setRollRandomizer({ spinning: false, display: finalRandomizer, value: finalRandomizer });
                 await sleep(350);
 
@@ -2529,7 +2623,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     setRollSelection({ spinning: false, display: 'Skipped', value: null });
                 } else {
                     finalSelection = selectionOptions[Math.floor(Math.random() * selectionOptions.length)];
-                    await spinRailValues(selectionOptions, (v) => setRollSelection({ spinning: true, display: v, value: null }));
+                    await spinRailValues(selectionOptions, (v) => setRollSelection({ spinning: true, display: v, value: null }), finalSelection);
                     setRollSelection({ spinning: false, display: finalSelection, value: finalSelection });
                 }
                 await sleep(350);
@@ -2545,15 +2639,17 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 if (matchingCars.length === 0) matchingCars = garage;
                 const finalCar = matchingCars[Math.floor(Math.random() * matchingCars.length)];
                 const carDisplayNames = garage.map(c => `${c.brand} ${c.modelName}`);
-                await spinRailValues(carDisplayNames, (v) => setRollGarage({ spinning: true, display: v, value: null }));
-                setRollGarage({ spinning: false, display: `${finalCar.brand} ${finalCar.modelName}`, value: finalCar.id });
+                const finalCarDisplay = `${finalCar.brand} ${finalCar.modelName}`;
+                await spinRailValues(carDisplayNames, (v) => setRollGarage({ spinning: true, display: v, value: null }), finalCarDisplay);
+                setRollGarage({ spinning: false, display: finalCarDisplay, value: finalCar.id });
                 await sleep(350);
 
                 // Rail 4: Mission
                 const finalMission = MISSION_TYPES[Math.floor(Math.random() * MISSION_TYPES.length)];
                 const finalMissionParams = finalMission.genParams();
-                await spinRailValues(MISSION_TYPES, (m) => setRollMission({ spinning: true, display: m.getTitle(m.genParams()), value: null, params: null }));
-                setRollMission({ spinning: false, display: finalMission.getTitle(finalMissionParams), value: finalMission.id, params: finalMissionParams });
+                const finalMissionDisplay = finalMission.getTitle(finalMissionParams);
+                await spinRailValues(MISSION_TYPES, (m) => setRollMission({ spinning: true, display: typeof m === 'string' ? m : m.getTitle(m.genParams()), value: null, params: null }), finalMissionDisplay);
+                setRollMission({ spinning: false, display: finalMissionDisplay, value: finalMission.id, params: finalMissionParams });
 
                 setRollComplete(true);
             };
@@ -2626,17 +2722,21 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     const burstY = Math.sin(burstAngle) * burstDist;
                     const dx = targetX - originX;
                     const dy = targetY - originY;
-                    const duration = 650 + Math.random() * 250;
-                    const delay = Math.random() * 140;
+                    // Slower, gentler float: longer hang-time at the burst
+                    // point before the particle eases in toward the pill,
+                    // instead of snapping straight there.
+                    const duration = 1400 + Math.random() * 500;
+                    const delay = Math.random() * 260;
 
                     const anim = el.animate([
                         { transform: 'translate(-50%, -50%) scale(0.6)', opacity: 0, offset: 0 },
-                        { transform: `translate(calc(-50% + ${burstX}px), calc(-50% + ${burstY}px)) scale(1.15)`, opacity: 1, offset: 0.3 },
+                        { transform: `translate(calc(-50% + ${burstX}px), calc(-50% + ${burstY}px)) scale(1.15)`, opacity: 1, offset: 0.22 },
+                        { transform: `translate(calc(-50% + ${burstX}px), calc(-50% + ${burstY}px)) scale(1)`, opacity: 1, offset: 0.45 },
                         { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.25)`, opacity: 0.9, offset: 1 }
                     ], {
                         duration,
                         delay,
-                        easing: 'cubic-bezier(0.32, 0, 0.24, 1)',
+                        easing: 'cubic-bezier(0.45, 0, 0.2, 1)',
                         fill: 'forwards'
                     });
                     anim.onfinish = () => {
@@ -2644,7 +2744,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                         landed++;
                         if (landed === 1) {
                             setPillGlowing(true);
-                            setTimeout(() => setPillGlowing(false), 550);
+                            setTimeout(() => setPillGlowing(false), 750);
                         }
                     };
                 }
@@ -3303,9 +3403,9 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
             const handleToggleLapTimer = () => {
                 if (isLapRunning) {
-                    clearInterval(lapTimerRef.current);
                     setIsLapRunning(false);
-                    const finishTime = lapTime;
+                    const finishTime = liveLapTimeRef.current;
+                    setLapTime(finishTime);
                     const prevBest = selectedGalleryCar.bestLap || 0;
                     if (prevBest === 0 || finishTime < prevBest) {
                         const updatedGarage = garage.map(c => {
@@ -3331,17 +3431,15 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                         showNotification(`Lap Finished: ${formatLapTime(finishTime)}`);
                     }
                 } else {
-                    const startTime = Date.now() - lapTime;
-                    lapTimerRef.current = setInterval(() => {
-                        setLapTime(Date.now() - startTime);
-                    }, 10);
+                    lapStartRef.current = Date.now() - lapTime;
+                    liveLapTimeRef.current = lapTime;
                     setIsLapRunning(true);
                 }
             };
 
             const handleResetLapTimer = () => {
-                clearInterval(lapTimerRef.current);
                 setIsLapRunning(false);
+                liveLapTimeRef.current = 0;
                 setLapTime(0);
             };
 
@@ -3655,7 +3753,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                         onMouseEnter={() => setHoveredBveIndex(idx)}
                                                         onMouseLeave={() => setHoveredBveIndex(null)}
                                                         style={{ background: spec.gradient, borderColor: spec.border, animationDelay: `${idx * 20}ms`, '--glow-rgb': spec.rawRGB }}
-                                                        className="group relative rounded-2xl p-5 border transition-all card-transition h-[340px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer staggered-card card-glow-hover"
+                                                        className="group relative rounded-2xl p-5 border transition-all card-transition h-[340px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer staggered-card card-glow-hover garage-card-cv"
                                                         onClick={() => handleOpenGallery(ownedCar)}
                                                     >
                                                         <AmbientSpheres colorRGB={spec.rawRGB} count={3} intensify={isHovered} />
@@ -3689,7 +3787,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                         {/* Transparent container drawing to fix image_83f046.jpg black background issue */}
                                                         <div className="absolute top-[85px] left-1/2 -translate-x-1/2 pointer-events-none z-0 w-[82%] flex items-center justify-center bg-transparent h-[140px]">
                                                             {ownedCar.image ? (
-                                                                <img src={ownedCar.image} alt="active cover" className="max-w-full max-h-full object-contain bg-transparent block mx-auto transition-transform duration-500 ease-out group-hover:scale-110" />
+                                                                <img src={ownedCar.image} alt="active cover" loading="lazy" decoding="async" className="max-w-full max-h-full object-contain bg-transparent block mx-auto transition-transform duration-500 ease-out group-hover:scale-110" />
                                                             ) : (
                                                                 <svg className="w-12 h-12 text-white/10 select-none animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                                                                     <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -3742,7 +3840,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                                 {(() => {
                                                                     const mastery = getMasteryLevel(ownedCar.masteryXp);
                                                                     return (
-                                                                        <div className="relative h-[18px] px-3 rounded-full overflow-hidden border border-white/10 bg-black/40 flex items-center shrink-0 ml-2" style={{ minWidth: '68px' }}>
+                                                                        <div className="relative h-[18px] px-4 rounded-full overflow-hidden border bg-black/40 flex items-center shrink-0 ml-2" style={{ minWidth: '92px', borderColor: `rgba(${spec.rawRGB}, 0.55)` }}>
                                                                             <div 
                                                                                 className="absolute inset-y-0 left-0 transition-all duration-500"
                                                                                 style={{ width: `${mastery.progress * 100}%`, background: `linear-gradient(90deg, rgba(${spec.rawRGB},0.2), rgba(${spec.rawRGB},0.75))` }}
@@ -4008,7 +4106,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                     onMouseLeave={() => setHoveredCardId(null)}
                                                     onClick={() => handleOpenGallery(car)}
                                                     style={{ background: spec.gradient, borderColor: spec.border, animationDelay: `${gridIndex * 25}ms`, '--glow-rgb': spec.rawRGB }}
-                                                    className="group relative rounded-2xl p-5 border transition-all card-transition h-[340px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer staggered-card card-glow-hover"
+                                                    className="group relative rounded-2xl p-5 border transition-all card-transition h-[340px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer staggered-card card-glow-hover garage-card-cv"
                                                 >
                                                     <AmbientSpheres colorRGB={spec.rawRGB} count={3} intensify={isHovered} />
                                                     <div className="card-glow-overlay" style={{ background: `radial-gradient(circle at 50% 50%, rgba(${spec.rawRGB}, 0.85) 0%, rgba(${spec.rawRGB}, 0.35) 35%, transparent 70%)` }} />
@@ -4041,7 +4139,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                     {/* Transparent background completely removes black/dark grey rectangle tints to fix image_83f046.jpg */}
                                                     <div className="absolute top-[85px] left-1/2 -translate-x-1/2 pointer-events-none z-0 w-[82%] flex items-center justify-center bg-transparent h-[140px]">
                                                         {car.image ? (
-                                                            <img src={car.image} alt="active cover" className="max-w-full max-h-full object-contain bg-transparent block mx-auto transition-transform duration-500 ease-out group-hover:scale-110" />
+                                                            <img src={car.image} alt="active cover" loading="lazy" decoding="async" className="max-w-full max-h-full object-contain bg-transparent block mx-auto transition-transform duration-500 ease-out group-hover:scale-110" />
                                                         ) : (
                                                             <svg className="w-12 h-12 text-white/10 select-none animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                                                                 <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -4101,7 +4199,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                                 {(() => {
                                                                     const mastery = getMasteryLevel(car.masteryXp);
                                                                     return (
-                                                                        <div className="relative h-[18px] px-3 rounded-full overflow-hidden border border-white/10 bg-black/40 flex items-center shrink-0" style={{ minWidth: '68px' }}>
+                                                                        <div className="relative h-[18px] px-4 rounded-full overflow-hidden border bg-black/40 flex items-center shrink-0" style={{ minWidth: '92px', borderColor: `rgba(${spec.rawRGB}, 0.55)` }}>
                                                                             <div 
                                                                                 className="absolute inset-y-0 left-0 transition-all duration-500"
                                                                                 style={{ width: `${mastery.progress * 100}%`, background: `linear-gradient(90deg, rgba(${spec.rawRGB},0.2), rgba(${spec.rawRGB},0.75))` }}
@@ -4167,19 +4265,6 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                 <AmbientSpheres colorRGB={gallerySpec.rawRGB} count={16} />
                             </div>
 
-                            {/* Mastery XP bar -- sits above everything else in this view */}
-                            {(() => {
-                                const mastery = getMasteryLevel(selectedGalleryCar.masteryXp);
-                                return (
-                                    <div className="w-full h-1.5 bg-black/60 relative z-10 shrink-0 overflow-hidden">
-                                        <div 
-                                            className="h-full transition-all duration-700 ease-out"
-                                            style={{ width: `${mastery.progress * 100}%`, background: `linear-gradient(90deg, rgba(${gallerySpec.rawRGB},0.5), rgba(${gallerySpec.rawRGB},1))` }}
-                                        />
-                                    </div>
-                                );
-                            })()}
-
                             <header className="w-full px-12 py-6 border-b border-b-white/[0.05] flex justify-between items-center gap-6 z-10 relative bg-[#07080b]/40 backdrop-blur-md">
                                 <h3 className="text-2xl font-black font-['Montserrat'] tracking-tight text-white leading-none shrink-0">
                                     {selectedGalleryCar.year} {selectedGalleryCar.brand} {selectedGalleryCar.modelName}
@@ -4187,7 +4272,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                 {(() => {
                                     const mastery = getMasteryLevel(selectedGalleryCar.masteryXp);
                                     return (
-                                        <div ref={masteryPillRef} className={`relative h-8 px-4 rounded-full overflow-hidden border flex-1 flex items-center transition-shadow duration-500 ${pillGlowing ? 'border-white/40 mastery-pill-glow' : 'border-white/10'}`} style={{ background: 'rgba(0,0,0,0.4)' }}>
+                                        <div ref={masteryPillRef} className={`relative h-8 px-4 rounded-full overflow-hidden border flex-1 flex items-center transition-shadow duration-500 ${pillGlowing ? 'mastery-pill-glow' : ''}`} style={{ background: 'rgba(0,0,0,0.4)', borderColor: pillGlowing ? 'rgba(255,255,255,0.4)' : `rgba(${gallerySpec.rawRGB}, 0.55)` }}>
                                             <div 
                                                 className="absolute inset-y-0 left-0 transition-all duration-500"
                                                 style={{ width: `${mastery.progress * 100}%`, background: `linear-gradient(90deg, rgba(${gallerySpec.rawRGB},0.25), rgba(${gallerySpec.rawRGB},0.85))` }}
@@ -4224,7 +4309,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                     <span className="material-symbols-outlined text-[13px]">{SPEC_ICONS.stopwatch}</span> Racetrack Stopwatch
                                                 </span>
                                                 <div className="flex justify-between items-center gap-3">
-                                                    <span className="text-lg font-mono font-black text-white">{formatLapTime(lapTime)}</span>
+                                                    <LiveStopwatch isRunning={isLapRunning} startRef={lapStartRef} liveRef={liveLapTimeRef} frozenMs={lapTime} formatLapTime={formatLapTime} />
                                                     <div className="flex gap-2 items-center">
                                                         <button 
                                                             onClick={handleToggleLapTimer}
@@ -4607,7 +4692,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                                     onClick={() => handleSelectActiveCover(img)}
                                                                     className={`relative w-full md:w-[60%] aspect-[16/10] rounded-3xl overflow-hidden border bg-transparent cursor-pointer group/item transition-all z-10 ${isActive ? 'border-emerald-500 ring-4 ring-emerald-500/20 scale-[1.01]' : 'border-white/10 hover:border-white/30'}`}
                                                                 >
-                                                                    <img src={img} alt={`album-${idx}`} className="w-full h-full object-cover bg-transparent" />
+                                                                    <img src={img} alt={`album-${idx}`} loading="lazy" decoding="async" className="w-full h-full object-cover bg-transparent" />
                                                                     
                                                                     <button 
                                                                         onClick={(e) => {
