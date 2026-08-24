@@ -1348,7 +1348,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
         // ANY card made the whole page recalculate EVERY card at once (that
         // was the main cause of the click-lag) -- now a card only
         // recalculates itself when something about IT actually changes.
-        const GarageCard = React.memo(({ car, gridIndex, isHovered, onHoverCard, onContextMenu, onOpenGallery }) => {
+        const GarageCard = React.memo(({ car, gridIndex, isHovered, onHoverCard, onContextMenu, onOpenGallery, getDynamicGradient, getCarLevel, getLevelBadgeStyles, getGreenvilleTagStyles, getMasteryLevel }) => {
             const spec = getDynamicGradient(car.color);
             const resolvedLevel = getCarLevel(car);
             const badgeStyles = getLevelBadgeStyles(resolvedLevel);
@@ -2097,7 +2097,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 return (matched / shorter.length) >= 0.8;
             };
 
-            const getCarLevel = (car) => {
+            const getCarLevel = useCallback((car) => {
                 const brandStr = car.brand || "";
                 const modelStr = car.modelName || "";
                 const trimStr = car.trim || "";
@@ -2129,9 +2129,9 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     return car.level;
                 }
                 return 'Level 0';
-            };
+            }, [activeServer]);
 
-            const getLevelBadgeStyles = (levelValue) => {
+            const getLevelBadgeStyles = useCallback((levelValue) => {
                 const lvl = (levelValue || '').toUpperCase().trim();
                 if (lvl === 'L1' || lvl === 'LEVEL 1') return { bg: 'rgba(16, 185, 129, 0.15)', text: '#10b981', border: 'rgba(16, 185, 129, 0.3)' };
                 if (lvl === 'L2' || lvl === 'LEVEL 2') return { bg: 'rgba(245, 158, 11, 0.15)', text: '#f59e0b', border: 'rgba(245, 158, 11, 0.3)' };
@@ -2141,7 +2141,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     return { bg: 'rgba(127, 29, 29, 0.6)', text: '#ff2222', border: '#ef4444', glow: '0 0 10px rgba(239, 68, 68, 0.8)' };
                 }
                 return { bg: 'rgba(148, 163, 184, 0.15)', text: '#94a3b8', border: 'rgba(148, 163, 184, 0.3)' };
-            };
+            }, []);
 
             // A broad set of common color names (not just the automotive-themed
             // shortlist above) so typing a plain word like "teal" or "maroon"
@@ -2221,7 +2221,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 return { r, g, b };
             };
 
-            const getDynamicGradient = (colorInput) => {
+            const getDynamicGradient = useCallback((colorInput) => {
                 let { r, g, b } = resolveRawRGB(colorInput);
 
                 // Ensure very dark colors (black/near-black cars) still show a
@@ -2244,7 +2244,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     border: `rgba(${r}, ${g}, ${b}, 0.25)`,
                     rawRGB: `${r}, ${g}, ${b}`
                 };
-            };
+            }, [palette]);
 
             // ---------------------------------------------------------------------
             // Color-family bucketing, so the garage color filter matches by actual
@@ -2311,7 +2311,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 return map[name] || "transparent";
             };
 
-            const getGreenvilleTagStyles = (tag) => {
+            const getGreenvilleTagStyles = useCallback((tag) => {
                 const cleanTag = (tag || "").toLowerCase().trim();
                 if (cleanTag === 'limited') {
                     return { bg: 'rgba(255, 214, 10, 0.12)', text: '#ffd60a', border: 'rgba(255, 214, 10, 0.35)' };
@@ -2326,7 +2326,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     return { bg: 'rgba(255, 159, 10, 0.12)', text: '#ff9f0a', border: 'rgba(255, 159, 10, 0.35)' };
                 }
                 return { bg: 'rgba(255, 255, 255, 0.08)', text: '#ffffff', border: 'rgba(255, 255, 255, 0.15)' };
-            };
+            }, []);
 
             const calculateEstimatedSellPrice = (cost, miles) => {
                 const rawCost = Number(cost) || 0;
@@ -2339,12 +2339,12 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             // Car Mastery: 250 XP per level, earned by completing missions
             // rolled for that specific car.
             const MASTERY_XP_PER_LEVEL = 250;
-            const getMasteryLevel = (xp) => {
+            const getMasteryLevel = useCallback((xp) => {
                 const total = Number(xp) || 0;
                 const level = Math.floor(total / MASTERY_XP_PER_LEVEL) + 1;
                 const xpIntoLevel = total % MASTERY_XP_PER_LEVEL;
                 return { level, xpIntoLevel, xpPerLevel: MASTERY_XP_PER_LEVEL, progress: xpIntoLevel / MASTERY_XP_PER_LEVEL, total };
-            };
+            }, []);
 
             const handleOpenAdd = () => {
                 setCurrentCar({
@@ -4274,6 +4274,11 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                 onHoverCard={setHoveredCardId}
                                                 onContextMenu={handleContextMenu}
                                                 onOpenGallery={handleOpenGallery}
+                                                getDynamicGradient={getDynamicGradient}
+                                                getCarLevel={getCarLevel}
+                                                getLevelBadgeStyles={getLevelBadgeStyles}
+                                                getGreenvilleTagStyles={getGreenvilleTagStyles}
+                                                getMasteryLevel={getMasteryLevel}
                                             />
                                         ))}
                                     </div>
