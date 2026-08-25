@@ -752,6 +752,20 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             "Random Car": "shuffle"
         };
 
+        // What icon represents a given Selection-rail VALUE, given which
+        // Randomizer type produced it. For "Category" the value itself is a
+        // real car type ("Convertible", "SUV"...) so we use the actual
+        // custom car-type icon pack for it; everything else just reuses the
+        // Randomizer's own icon (palette for a color name, storefront for a
+        // brand name, etc).
+        const getSelectionIcon = (randomizerType, value) => {
+            if (randomizerType === 'Category' && CAR_TYPE_ICON_URLS[value]) {
+                return { kind: 'image', url: CAR_TYPE_ICON_URLS[value] };
+            }
+            const matName = MISSION_RANDOMIZER_ICONS[randomizerType];
+            return matName ? { kind: 'material', name: matName } : null;
+        };
+
         const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
         // Each mission type generates its own random params at roll time
@@ -1319,7 +1333,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             osc.type = 'square';
             osc.frequency.value = 720 + Math.random() * 90;
             gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.16, ctx.currentTime + 0.004);
+            gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.004);
             gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.05);
             osc.connect(gain);
             gain.connect(ctx.destination);
@@ -1338,7 +1352,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 osc.frequency.value = freq;
                 const t0 = now + i * 0.02;
                 gain.gain.setValueAtTime(0.0001, t0);
-                gain.gain.exponentialRampToValueAtTime(0.18, t0 + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.09, t0 + 0.02);
                 gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.35);
                 osc.connect(gain);
                 gain.connect(ctx.destination);
@@ -1358,7 +1372,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 osc.frequency.value = freq;
                 const t0 = now + i * 0.06;
                 gain.gain.setValueAtTime(0.0001, t0);
-                gain.gain.exponentialRampToValueAtTime(0.2, t0 + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.1, t0 + 0.02);
                 gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.5);
                 osc.connect(gain);
                 gain.connect(ctx.destination);
@@ -1367,14 +1381,38 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             });
         };
 
+        // A single item inside the reel strip: the representative icon sits
+        // behind the text at low opacity so you can tell what's spinning by
+        // at a glance, not just read blurred text.
+        const ReelItemContent = ({ item, itemHeight }) => {
+            if (!item) return null;
+            return (
+                <div style={{ height: itemHeight }} className="relative flex items-center justify-center w-full">
+                    {item.icon && item.icon.kind === 'image' && (
+                        <img src={item.icon.url} alt="" className="absolute inset-0 m-auto object-contain opacity-30 pointer-events-none" style={{ width: itemHeight * 0.62, height: itemHeight * 0.62 }} />
+                    )}
+                    {item.icon && item.icon.kind === 'material' && (
+                        <span className="material-symbols-outlined absolute inset-0 flex items-center justify-center text-white/30 pointer-events-none" style={{ fontSize: itemHeight * 0.55 }}>{item.icon.name}</span>
+                    )}
+                    <span className="relative z-10 text-xs font-black text-center font-sans leading-tight px-2 text-white truncate max-w-full">
+                        {item.display}
+                    </span>
+                </div>
+            );
+        };
+
         // A real vertical slot-machine reel -- builds a tall strip of random
-        // filler values capped off with the actual result, then animates the
-        // whole strip scrolling upward with a fast-start/slow-settle curve
-        // (instead of the old version which just flickered text). Plays a
-        // decelerating tick per step and a chime the moment it lands.
-        const SlotReel = ({ pool, finalValue, spinToken, spinMs = 2000, itemHeight = 32 }) => {
+        // filler values (each with its own representative icon behind the
+        // text) capped off with the actual result, then animates the whole
+        // strip scrolling upward with a fast-start/slow-settle curve. The
+        // tick sound is driven by sampling the strip's ACTUAL rendered
+        // position every frame (not a separately-scheduled timer), so it
+        // can't drift out of sync with what you're seeing even as it slows
+        // down at the end.
+        const SlotReel = ({ pool, finalValue, spinToken, spinMs = 2000, itemHeight = 64 }) => {
             const trackRef = useRef(null);
             const [stripItems, setStripItems] = useState([]);
+            const lastTickIndexRef = useRef(0);
 
             useEffect(() => {
                 if (!spinToken) return;
@@ -1385,9 +1423,11 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 const filler = Array.from({ length: fillerCount }, () => pool[Math.floor(Math.random() * pool.length)]);
                 const strip = [...filler, finalValue];
                 setStripItems(strip);
+                lastTickIndexRef.current = 0;
 
                 let cancelled = false;
                 let anim = null;
+                let rafId = null;
 
                 // Wait a tick so React actually paints the fresh strip before we
                 // snap it back to the top and start animating -- otherwise the
@@ -1408,37 +1448,56 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     );
                     anim.onfinish = () => { if (!cancelled) playReelLand(); };
 
-                    (async () => {
-                        const minTick = 45, maxTick = 260;
-                        const start = performance.now();
-                        let elapsed = 0;
-                        while (elapsed < spinMs && !cancelled) {
-                            const progress = elapsed / spinMs;
-                            const eased = 1 - Math.pow(1 - progress, 3);
-                            const tickMs = minTick + (maxTick - minTick) * eased;
+                    // Sample the strip's real rendered position every frame and
+                    // fire a tick exactly when it crosses each item boundary --
+                    // this stays perfectly synced to what's on screen no matter
+                    // how much the easing curve slows down near the end.
+                    const watchPosition = () => {
+                        if (cancelled) return;
+                        const currentTime = typeof anim.currentTime === 'number' ? anim.currentTime : spinMs;
+                        const style = getComputedStyle(track);
+                        const matrix = new DOMMatrixReadOnly(style.transform);
+                        const traveled = Math.min(totalDistance, Math.max(0, -matrix.m42));
+                        const currentIndex = Math.floor(traveled / itemHeight);
+                        if (currentIndex !== lastTickIndexRef.current) {
+                            lastTickIndexRef.current = currentIndex;
                             playReelTick();
-                            await sleep(tickMs);
-                            elapsed = performance.now() - start;
                         }
-                    })();
+                        if (currentTime < spinMs) {
+                            rafId = requestAnimationFrame(watchPosition);
+                        }
+                    };
+                    rafId = requestAnimationFrame(watchPosition);
                 });
 
                 return () => {
                     cancelled = true;
                     cancelAnimationFrame(raf);
+                    if (rafId) cancelAnimationFrame(rafId);
                     if (anim) anim.cancel();
                 };
             }, [spinToken]);
 
+            // Vertical fade applied as a mask on the SAME clipped/rounded
+            // element (instead of separate overlay rectangles) so it follows
+            // the box's rounded corners exactly -- no hard-edged seam where
+            // a flat overlay used to poke past the curve.
+            const fadeMask = 'linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%)';
+
             return (
-                <div className="w-full overflow-hidden relative" style={{ height: itemHeight }}>
-                    <div ref={trackRef} className="flex flex-col will-change-transform">
-                        {stripItems.map((item, i) => (
-                            <div key={i} style={{ height: itemHeight }} className="flex items-center justify-center text-xs font-black text-center font-sans leading-tight px-1 text-white truncate w-full">
-                                {item}
-                            </div>
-                        ))}
-                    </div>
+                <div 
+                    className="w-full relative rounded-xl"
+                    style={{ height: itemHeight, overflow: 'hidden', WebkitMaskImage: fadeMask, maskImage: fadeMask }}
+                >
+                    {stripItems.length > 0 ? (
+                        <div ref={trackRef} className="flex flex-col will-change-transform">
+                            {stripItems.map((item, i) => (
+                                <ReelItemContent key={i} item={item} itemHeight={itemHeight} />
+                            ))}
+                        </div>
+                    ) : (
+                        <ReelItemContent item={finalValue} itemHeight={itemHeight} />
+                    )}
                 </div>
             );
         };
@@ -2197,6 +2256,13 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             
             const [currentCar, setCurrentCar] = useState(null);
             const [isAiImportOpen, setIsAiImportOpen] = useState(false);
+            const [isDataMenuOpen, setIsDataMenuOpen] = useState(false);
+            const importFileInputRef = useRef(null);
+            const [isPriceOverviewOpen, setIsPriceOverviewOpen] = useState(false);
+            const [priceSortBy, setPriceSortBy] = useState('Buy Price');
+            const [priceSortDir, setPriceSortDir] = useState('desc');
+            const priceOverviewScrollRef = useRef(null);
+            useSmoothScroll(priceOverviewScrollRef);
             const [aiImportText, setAiImportText] = useState('');
             const [toast, setToast] = useState({ visible: false, message: '' });
 
@@ -2692,6 +2758,17 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 return { bg: 'rgba(148, 163, 184, 0.15)', text: '#94a3b8', border: 'rgba(148, 163, 184, 0.3)' };
             }, []);
 
+            // Turns a level badge value ("L1", "Level 0", "Permbanned"...) into
+            // a plain number so the Price Overview table can actually sort by
+            // it -- string-sorting "L10" vs "L2" would otherwise put L10 first.
+            const getLevelSortValue = (levelValue) => {
+                if (!levelValue) return 0;
+                if (levelValue === 'Permbanned') return 9999;
+                if (levelValue === 'Level 0') return 0;
+                const match = /L(\d+)/i.exec(levelValue);
+                return match ? Number(match[1]) : 0;
+            };
+
             // A broad set of common color names (not just the automotive-themed
             // shortlist above) so typing a plain word like "teal" or "maroon"
             // resolves to a real color instead of falling through to the gray
@@ -2884,6 +2961,50 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 const mileageFactor = Math.max(0.55, 0.85 - (rawMiles * 0.000015));
                 return Math.round(rawCost * mileageFactor);
             };
+
+            // Every car's buy vs. estimated sell price, sortable by whichever
+            // column was last clicked in the Price Overview popup. Guarded
+            // behind isPriceOverviewOpen -- without that, this would re-map
+            // and re-sort your ENTIRE garage every time anything about any
+            // car changed (XP ticking up, editing a car, etc), even while
+            // the popup was closed and nobody could see it.
+            const priceOverviewRows = useMemo(() => {
+                if (!isPriceOverviewOpen) return [];
+                const rows = garage.map(car => ({
+                    car,
+                    level: getCarLevel(car),
+                    sellPrice: calculateEstimatedSellPrice(car.cost, car.miles)
+                }));
+                rows.sort((a, b) => {
+                    let valA, valB;
+                    if (priceSortBy === 'Name') {
+                        valA = `${a.car.brand} ${a.car.modelName}`.toLowerCase();
+                        valB = `${b.car.brand} ${b.car.modelName}`.toLowerCase();
+                    } else if (priceSortBy === 'Year') {
+                        valA = Number(a.car.year) || 0;
+                        valB = Number(b.car.year) || 0;
+                    } else if (priceSortBy === 'Level') {
+                        valA = getLevelSortValue(a.level);
+                        valB = getLevelSortValue(b.level);
+                    } else if (priceSortBy === 'Sell Price') {
+                        valA = a.sellPrice || 0;
+                        valB = b.sellPrice || 0;
+                    } else {
+                        valA = a.car.cost || 0;
+                        valB = b.car.cost || 0;
+                    }
+                    return priceSortDir === 'desc' ? (valA < valB ? 1 : -1) : (valA > valB ? 1 : -1);
+                });
+                return rows;
+            }, [garage, priceSortBy, priceSortDir, activeServer, isPriceOverviewOpen]);
+
+            const priceOverviewTotals = useMemo(() => {
+                return priceOverviewRows.reduce((acc, r) => {
+                    acc.buy += r.car.cost || 0;
+                    acc.sell += r.sellPrice || 0;
+                    return acc;
+                }, { buy: 0, sell: 0 });
+            }, [priceOverviewRows]);
 
             // Car Mastery: 250 XP per level, earned by completing missions
             // rolled for that specific car.
@@ -3203,6 +3324,9 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     } else if (garageSortBy === 'Top Speed') {
                         valA = Number(a.topSpeed) || 0;
                         valB = Number(b.topSpeed) || 0;
+                    } else if (garageSortBy === 'XP') {
+                        valA = Number(a.masteryXp) || 0;
+                        valB = Number(b.masteryXp) || 0;
                     }
 
                     return sortDirection === 'desc' ? (valA < valB ? 1 : -1) : (valA > valB ? 1 : -1);
@@ -3300,15 +3424,21 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     return;
                 }
                 setRollComplete(false);
-                setRollRandomizer({ spinning: true, display: '', value: null });
-                setRollSelection({ spinning: false, display: '—', value: null });
-                setRollGarage({ spinning: false, display: '—', value: null });
-                setRollMission({ spinning: false, display: '—', value: null, params: null });
-                setRollPools({ randomizer: MISSION_RANDOMIZER_TYPES, selection: [], garage: [], mission: [] });
+                setRollRandomizer({ spinning: true, display: '', value: null, icon: null });
+                setRollSelection({ spinning: false, display: '—', value: null, icon: null });
+                setRollGarage({ spinning: false, display: '—', value: null, icon: null });
+                setRollMission({ spinning: false, display: '—', value: null, params: null, icon: null });
+                setRollPools({ randomizer: [], selection: [], garage: [], mission: [] });
 
                 // Rail 1: Randomizer
                 const finalRandomizer = MISSION_RANDOMIZER_TYPES[Math.floor(Math.random() * MISSION_RANDOMIZER_TYPES.length)];
-                setRollRandomizer({ spinning: true, display: finalRandomizer, value: finalRandomizer });
+                const randomizerIcon = MISSION_RANDOMIZER_ICONS[finalRandomizer] ? { kind: 'material', name: MISSION_RANDOMIZER_ICONS[finalRandomizer] } : null;
+                const randomizerPoolItems = MISSION_RANDOMIZER_TYPES.map(v => ({
+                    display: v,
+                    icon: MISSION_RANDOMIZER_ICONS[v] ? { kind: 'material', name: MISSION_RANDOMIZER_ICONS[v] } : null
+                }));
+                setRollPools(prev => ({ ...prev, randomizer: randomizerPoolItems }));
+                setRollRandomizer({ spinning: true, display: finalRandomizer, value: finalRandomizer, icon: randomizerIcon });
                 setRollTokens(prev => ({ ...prev, randomizer: prev.randomizer + 1 }));
                 await sleep(MISSION_SPIN_MS);
                 setRollRandomizer(prev => ({ ...prev, spinning: false }));
@@ -3328,11 +3458,12 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 }
 
                 if (finalRandomizer === 'Random Car' || selectionOptions.length === 0) {
-                    setRollSelection({ spinning: false, display: 'Skipped', value: null });
+                    setRollSelection({ spinning: false, display: 'Skipped', value: null, icon: null });
                 } else {
                     finalSelection = selectionOptions[Math.floor(Math.random() * selectionOptions.length)];
-                    setRollPools(prev => ({ ...prev, selection: selectionOptions }));
-                    setRollSelection({ spinning: true, display: finalSelection, value: finalSelection });
+                    const selectionPoolItems = selectionOptions.map(v => ({ display: v, icon: getSelectionIcon(finalRandomizer, v) }));
+                    setRollPools(prev => ({ ...prev, selection: selectionPoolItems }));
+                    setRollSelection({ spinning: true, display: finalSelection, value: finalSelection, icon: getSelectionIcon(finalRandomizer, finalSelection) });
                     setRollTokens(prev => ({ ...prev, selection: prev.selection + 1 }));
                     await sleep(MISSION_SPIN_MS);
                     setRollSelection(prev => ({ ...prev, spinning: false }));
@@ -3349,10 +3480,16 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 }
                 if (matchingCars.length === 0) matchingCars = garage;
                 const finalCar = matchingCars[Math.floor(Math.random() * matchingCars.length)];
-                const carDisplayNames = garage.map(c => `${c.brand} ${c.modelName}`);
                 const finalCarDisplay = `${finalCar.brand} ${finalCar.modelName}`;
-                setRollPools(prev => ({ ...prev, garage: carDisplayNames }));
-                setRollGarage({ spinning: true, display: finalCarDisplay, value: finalCar.id });
+                const garagePoolItems = garage.map(c => ({
+                    display: `${c.brand} ${c.modelName}`,
+                    icon: c.image ? { kind: 'image', url: c.image } : (CAR_TYPE_ICON_URLS[c.type] ? { kind: 'image', url: CAR_TYPE_ICON_URLS[c.type] } : null)
+                }));
+                setRollPools(prev => ({ ...prev, garage: garagePoolItems }));
+                setRollGarage({
+                    spinning: true, display: finalCarDisplay, value: finalCar.id,
+                    icon: finalCar.image ? { kind: 'image', url: finalCar.image } : (CAR_TYPE_ICON_URLS[finalCar.type] ? { kind: 'image', url: CAR_TYPE_ICON_URLS[finalCar.type] } : null)
+                });
                 setRollTokens(prev => ({ ...prev, garage: prev.garage + 1 }));
                 await sleep(MISSION_SPIN_MS);
                 setRollGarage(prev => ({ ...prev, spinning: false }));
@@ -3362,9 +3499,15 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 const finalMission = MISSION_TYPES[Math.floor(Math.random() * MISSION_TYPES.length)];
                 const finalMissionParams = finalMission.genParams();
                 const finalMissionDisplay = finalMission.getTitle(finalMissionParams);
-                const missionTitlePool = MISSION_TYPES.map(m => m.getTitle(m.genParams()));
-                setRollPools(prev => ({ ...prev, mission: missionTitlePool }));
-                setRollMission({ spinning: true, display: finalMissionDisplay, value: finalMission.id, params: finalMissionParams });
+                const missionPoolItems = MISSION_TYPES.map(m => {
+                    const p = m.genParams();
+                    return { display: m.getTitle(p), icon: m.icon ? { kind: 'material', name: m.icon } : null };
+                });
+                setRollPools(prev => ({ ...prev, mission: missionPoolItems }));
+                setRollMission({
+                    spinning: true, display: finalMissionDisplay, value: finalMission.id, params: finalMissionParams,
+                    icon: finalMission.icon ? { kind: 'material', name: finalMission.icon } : null
+                });
                 setRollTokens(prev => ({ ...prev, mission: prev.mission + 1 }));
                 await sleep(MISSION_SPIN_MS);
                 setRollMission(prev => ({ ...prev, spinning: false }));
@@ -3416,7 +3559,16 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             // Animations API work -- not React state -- since this is a
             // one-off visual effect, not something that needs to persist or
             // re-render.
-            const spawnXpBurst = (originEl, colorRGB) => {
+            // Sends a swarm of little particles flying from wherever you
+            // clicked to the Mastery pill, each landing at its own moment and
+            // bowing along its own curved path (not all in a straight line)
+            // so it reads as a loose swarm being pulled in rather than a
+            // single burst. XP is awarded PER PARTICLE, right as it lands --
+            // that's what actually grows the pill's fill bar bit by bit
+            // (via its own CSS width transition) instead of the whole amount
+            // just teleporting into the bar the instant you clicked, back
+            // before the balls had even reached it.
+            const spawnXpBurst = (originEl, colorRGB, carId, totalXp) => {
                 if (!originEl || !masteryPillRef.current) return;
                 const originRect = originEl.getBoundingClientRect();
                 const targetRect = masteryPillRef.current.getBoundingClientRect();
@@ -3426,7 +3578,16 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 const targetY = targetRect.top + targetRect.height / 2;
 
                 const particleCount = 16;
-                let landed = 0;
+                const xpPerParticle = totalXp ? totalXp / particleCount : 0;
+
+                const dx = targetX - originX;
+                const dy = targetY - originY;
+                const dist = Math.hypot(dx, dy) || 1;
+                // Perpendicular direction to the straight origin->target line --
+                // used to bow each particle's path out to one side or the
+                // other, so they don't all travel the exact same line.
+                const perpX = -dy / dist;
+                const perpY = dx / dist;
 
                 for (let i = 0; i < particleCount; i++) {
                     const el = document.createElement('div');
@@ -3446,32 +3607,41 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     const burstDist = 35 + Math.random() * 45;
                     const burstX = Math.cos(burstAngle) * burstDist;
                     const burstY = Math.sin(burstAngle) * burstDist;
-                    const dx = targetX - originX;
-                    const dy = targetY - originY;
-                    // Slower, gentler float: longer hang-time at the burst
-                    // point before the particle eases in toward the pill,
-                    // instead of snapping straight there.
-                    const duration = 1400 + Math.random() * 500;
-                    const delay = Math.random() * 260;
+
+                    // Each particle curves in at its own angle and strength --
+                    // a believable little swarm converging on the pill rather
+                    // than 16 identical straight lines.
+                    const curveSign = Math.random() < 0.5 ? -1 : 1;
+                    const curveAmount = (40 + Math.random() * 110) * curveSign;
+                    const midT = 0.55 + Math.random() * 0.15;
+                    const midX = dx * midT + perpX * curveAmount;
+                    const midY = dy * midT + perpY * curveAmount;
+
+                    // Noticeably slower and more spread out than before, so
+                    // the whole swarm reads as a lingering flow rather than a
+                    // quick burst -- this spread is also what makes the
+                    // per-particle XP growth below actually visible as
+                    // distinct little steps instead of one instant jump.
+                    const duration = 2600 + Math.random() * 1400;
+                    const delay = Math.random() * 900;
 
                     const anim = el.animate([
                         { transform: 'translate(-50%, -50%) scale(0.6)', opacity: 0, offset: 0 },
-                        { transform: `translate(calc(-50% + ${burstX}px), calc(-50% + ${burstY}px)) scale(1.15)`, opacity: 1, offset: 0.22 },
-                        { transform: `translate(calc(-50% + ${burstX}px), calc(-50% + ${burstY}px)) scale(1)`, opacity: 1, offset: 0.45 },
-                        { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.25)`, opacity: 0.9, offset: 1 }
+                        { transform: `translate(calc(-50% + ${burstX}px), calc(-50% + ${burstY}px)) scale(1.15)`, opacity: 1, offset: 0.16 },
+                        { transform: `translate(calc(-50% + ${burstX}px), calc(-50% + ${burstY}px)) scale(1)`, opacity: 1, offset: 0.34 },
+                        { transform: `translate(calc(-50% + ${midX}px), calc(-50% + ${midY}px)) scale(0.85)`, opacity: 1, offset: 0.75 },
+                        { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.2)`, opacity: 0.85, offset: 1 }
                     ], {
                         duration,
                         delay,
-                        easing: 'cubic-bezier(0.45, 0, 0.2, 1)',
+                        easing: 'cubic-bezier(0.4, 0.05, 0.2, 1)',
                         fill: 'forwards'
                     });
                     anim.onfinish = () => {
                         el.remove();
-                        landed++;
-                        if (landed === 1) {
-                            setPillGlowing(true);
-                            setTimeout(() => setPillGlowing(false), 750);
-                        }
+                        if (carId != null && xpPerParticle) awardMissionXp(carId, xpPerParticle);
+                        setPillGlowing(true);
+                        setTimeout(() => setPillGlowing(false), 500);
                     };
                 }
             };
@@ -3481,9 +3651,9 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             // mission list re-renders), fires the burst at the same moment,
             // then runs the real completion logic once the button has
             // finished disappearing.
-            const triggerMissionCompleteFx = (buttonEl, colorRGB, completeFn) => {
+            const triggerMissionCompleteFx = (buttonEl, colorRGB, carId, totalXp, completeFn) => {
                 if (!buttonEl) { completeFn(); return; }
-                spawnXpBurst(buttonEl, colorRGB);
+                spawnXpBurst(buttonEl, colorRGB, carId, totalXp);
                 const anim = buttonEl.animate([
                     { transform: 'scale(1)', opacity: 1 },
                     { transform: 'scale(0.15)', opacity: 0 }
@@ -3495,17 +3665,17 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 setMissions(prev => prev.map(m => m.id === mission.id ? { ...m, timerStartedAt: Date.now(), timerElapsedMs: 0 } : m));
             };
 
-            const handleCompleteMission = (missionId) => {
+            const handleCompleteMission = (missionId, awardXpNow = true) => {
                 const mission = missions.find(m => m.id === missionId);
                 const missionType = mission ? MISSION_TYPES.find(mt => mt.id === mission.missionTypeId) : null;
                 setMissions(prev => prev.map(m => m.id === missionId ? { ...m, status: 'completed', completedAt: Date.now(), timerStartedAt: null } : m));
-                if (mission && missionType) awardMissionXp(mission.carId, missionType.xp);
+                if (awardXpNow && mission && missionType) awardMissionXp(mission.carId, missionType.xp);
                 showNotification("Mission complete!");
             };
 
             // Counter missions (photo tour, uber): one tap = +1 progress,
             // auto-completes once it hits the target.
-            const handleIncrementCounterMission = (mission) => {
+            const handleIncrementCounterMission = (mission, awardXpNow = true) => {
                 const missionType = MISSION_TYPES.find(mt => mt.id === mission.missionTypeId);
                 if (!missionType) return;
                 const target = missionType.getTarget(mission.params || {});
@@ -3518,14 +3688,14 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     completedAt: isDone ? Date.now() : null
                 } : m));
                 if (isDone) {
-                    awardMissionXp(mission.carId, missionType.xp);
+                    if (awardXpNow) awardMissionXp(mission.carId, missionType.xp);
                     showNotification("Mission complete!");
                 }
             };
 
             // The Cut: cuts count toward target directly, overtakes count for
             // double (bonus for actually catching up after the cut).
-            const handleCutProgress = (mission, type) => {
+            const handleCutProgress = (mission, type, awardXpNow = true) => {
                 const missionType = MISSION_TYPES.find(mt => mt.id === mission.missionTypeId);
                 if (!missionType) return;
                 const target = missionType.getTarget(mission.params || {});
@@ -3541,7 +3711,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     completedAt: isDone ? Date.now() : null
                 } : m));
                 if (isDone) {
-                    awardMissionXp(mission.carId, missionType.xp);
+                    if (awardXpNow) awardMissionXp(mission.carId, missionType.xp);
                     showNotification("Mission complete!");
                 }
             };
@@ -3549,6 +3719,14 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             const handleCancelMission = (missionId) => {
                 setMissions(prev => prev.filter(m => m.id !== missionId));
                 showNotification("Mission cancelled.");
+            };
+
+            // Wipes every mission marked "completed" out of the Missions list
+            // in one go, so old finished ones don't just pile up forever with
+            // no way to clean them out.
+            const handleClearCompletedMissions = () => {
+                setMissions(prev => prev.filter(m => m.status !== 'completed'));
+                showNotification("Cleared completed missions.");
             };
 
             const formatMissionTimer = (ms) => {
@@ -4275,13 +4453,23 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                             <p className="text-[11px] text-white/40 font-sans mt-0.5">Roll a random car and objective from your garage</p>
                                         </div>
                                     </div>
-                                    <button
-                                        onClick={() => { setIsMissionHubOpen(false); setIsNewMissionRolling(true); handleStartRoll(); }}
-                                        className="h-10 px-5 rounded-full bg-gradient-to-b from-emerald-400 to-emerald-600 hover:from-emerald-300 hover:to-emerald-500 text-black text-[13px] font-black transition-all flex items-center gap-1.5 shadow-[0_4px_16px_rgba(16,185,129,0.3)]"
-                                    >
-                                        <img src={MISSION_ICON_URL} alt="" className="w-4 h-4 object-contain" style={{ filter: 'brightness(0)' }} />
-                                        New Mission
-                                    </button>
+                                    <div className="flex items-center gap-2">
+                                        {missions.some(m => m.status === 'completed') && (
+                                            <button
+                                                onClick={handleClearCompletedMissions}
+                                                className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[12px] font-bold text-white/60 hover:text-white/90 transition-all"
+                                            >
+                                                Clear Completed
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={() => { setIsMissionHubOpen(false); setIsNewMissionRolling(true); handleStartRoll(); }}
+                                            className="h-10 px-5 rounded-full bg-gradient-to-b from-emerald-400 to-emerald-600 hover:from-emerald-300 hover:to-emerald-500 text-black text-[13px] font-black transition-all flex items-center gap-1.5 shadow-[0_4px_16px_rgba(16,185,129,0.3)]"
+                                        >
+                                            <img src={MISSION_ICON_URL} alt="" className="w-4 h-4 object-contain" style={{ filter: 'brightness(0)' }} />
+                                            New Mission
+                                        </button>
+                                    </div>
                                 </div>
                                 <div ref={missionHubScrollRef} className="flex-1 overflow-y-auto p-6 flex flex-col gap-3 relative z-10">
                                     {missions.length === 0 && (
@@ -4296,11 +4484,11 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                         if (!missionType || !car) return null;
                                         const missionCarSpec = getDynamicGradient(car.color);
                                         return (
-                                            <button
+                                            <div
                                                 key={mission.id}
                                                 onClick={() => { setIsMissionHubOpen(false); handleOpenGallery(car); }}
                                                 style={{ background: `linear-gradient(90deg, rgba(${missionCarSpec.rawRGB}, 0.12) 0%, rgba(255,255,255,0.02) 100%)`, borderColor: `rgba(${missionCarSpec.rawRGB}, 0.25)` }}
-                                                className="text-left hover:brightness-125 border rounded-2xl p-4 flex items-center gap-4 transition-all"
+                                                className="text-left hover:brightness-125 border rounded-2xl p-4 flex items-center gap-4 transition-all cursor-pointer"
                                             >
                                                 {CAR_TYPE_ICON_URLS[car.type] && (
                                                     <img src={CAR_TYPE_ICON_URLS[car.type]} alt="" className="w-8 h-8 object-contain opacity-80 shrink-0" />
@@ -4312,7 +4500,14 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                 <span className={`text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full font-sans shrink-0 ${mission.status === 'completed' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/50'}`}>
                                                     {mission.status === 'completed' ? 'Completed' : 'Active'}
                                                 </span>
-                                            </button>
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); handleCancelMission(mission.id); }}
+                                                    title="Remove from this list"
+                                                    className="w-7 h-7 rounded-full bg-white/5 hover:bg-red-500/20 hover:text-red-400 text-white/40 flex items-center justify-center transition-all shrink-0"
+                                                >
+                                                    <span className="material-symbols-outlined text-[15px]">close</span>
+                                                </button>
+                                            </div>
                                         );
                                     })}
                                 </div>
@@ -4339,21 +4534,17 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                             <div key={key} className="flex flex-col items-center gap-1.5">
                                                 <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider font-sans">{label}</span>
                                                 <div 
-                                                    className={`relative w-full bg-black/40 border rounded-2xl p-4 flex items-center justify-center h-16 overflow-hidden transition-all duration-500 ${isSettled ? 'rail-settled rail-settle-bounce border-emerald-500/50' : 'border-white/[0.08]'}`}
+                                                    className={`relative w-full bg-black/40 border rounded-2xl p-2 flex items-center justify-center h-24 overflow-hidden transition-all duration-500 ${isSettled ? 'rail-settled rail-settle-bounce border-emerald-500/50' : 'border-white/[0.08]'}`}
                                                 >
                                                     {isSettled && (
                                                         <span className="material-symbols-outlined absolute top-2 right-2 text-[14px] text-emerald-400 rail-check-pop z-10">check_circle</span>
                                                     )}
-                                                    {/* Fade masks top/bottom of the reel window so items scroll in/out
-                                                        softly instead of cutting off hard */}
-                                                    <div className="absolute inset-x-0 top-0 h-3 z-10 pointer-events-none" style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.6), transparent)' }} />
-                                                    <div className="absolute inset-x-0 bottom-0 h-3 z-10 pointer-events-none" style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.6), transparent)' }} />
                                                     <SlotReel
                                                         pool={rollPools[key]}
-                                                        finalValue={rail.display || '—'}
+                                                        finalValue={{ display: rail.display || '—', icon: rail.icon || null }}
                                                         spinToken={rollTokens[key]}
                                                         spinMs={MISSION_SPIN_MS}
-                                                        itemHeight={32}
+                                                        itemHeight={80}
                                                     />
                                                 </div>
                                             </div>
@@ -4392,13 +4583,38 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                             <h1 className="text-xl font-extrabold tracking-tight font-['Montserrat'] bg-gradient-to-r from-white via-white/80 to-white/60 bg-clip-text text-transparent">okGARAGE - mini</h1>
                         </div>
                         <div className="flex gap-3">
-                            <button onClick={handleDownloadLocalBackup} className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5" title="Download backup file directly to computer">
-                                Export JSON Data
+                            <div className="relative">
+                                <button onClick={() => setIsDataMenuOpen(v => !v)} className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5">
+                                    <span className="material-symbols-outlined text-[15px]">swap_vert</span>
+                                    Backup Data
+                                </button>
+                                {isDataMenuOpen && (
+                                    <>
+                                        <div className="fixed inset-0 z-40" onClick={() => setIsDataMenuOpen(false)} />
+                                        <div className="absolute top-12 right-0 z-50 w-52 bg-[#15161b] border border-white/10 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.7)] p-1.5 flex flex-col gap-1">
+                                            <button
+                                                onClick={() => { handleDownloadLocalBackup(); setIsDataMenuOpen(false); }}
+                                                className="text-left px-3 py-2.5 rounded-xl hover:bg-white/5 text-[12px] font-semibold text-white/80 flex items-center gap-2 transition-colors"
+                                            >
+                                                <span className="material-symbols-outlined text-[16px] text-emerald-400">download</span>
+                                                Export JSON Data
+                                            </button>
+                                            <button
+                                                onClick={() => { importFileInputRef.current?.click(); setIsDataMenuOpen(false); }}
+                                                className="text-left px-3 py-2.5 rounded-xl hover:bg-white/5 text-[12px] font-semibold text-white/80 flex items-center gap-2 transition-colors"
+                                            >
+                                                <span className="material-symbols-outlined text-[16px] text-sky-400">upload</span>
+                                                Import JSON File
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
+                                <input ref={importFileInputRef} type="file" accept=".json" onChange={handleImportLocalFile} className="hidden" />
+                            </div>
+                            <button onClick={() => setIsPriceOverviewOpen(true)} className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5">
+                                <span className="material-symbols-outlined text-[15px]">payments</span>
+                                Price Overview
                             </button>
-                            <label className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5 cursor-pointer" title="Import database file from local path">
-                                Import JSON File
-                                <input type="file" accept=".json" onChange={handleImportLocalFile} className="hidden" />
-                            </label>
                             <button onClick={() => setIsMissionHubOpen(true)} className="h-10 px-5 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[13px] font-semibold transition-all flex items-center gap-1.5">
                                 <img src={MISSION_ICON_URL} alt="" className="w-4 h-4 object-contain" style={{ filter: 'invert(64%) sepia(45%) saturate(600%) hue-rotate(100deg) brightness(95%)' }} />
                                 Mission
@@ -4564,7 +4780,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                 }}
                                             />
 
-                                            {['Year', 'Make', 'Sell Price', 'HP', 'Top Speed'].map((cat) => (
+                                            {['Year', 'Make', 'HP', 'Top Speed', 'Sell Price', 'XP'].map((cat) => (
                                                 <button 
                                                     key={cat}
                                                     ref={el => sortRefs.current[cat] = el}
@@ -5090,7 +5306,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
                                                 {galleryMissionType.kind === 'manual' && (
                                                     <button
-                                                        onClick={(e) => triggerMissionCompleteFx(e.currentTarget, gallerySpec.rawRGB, () => handleCompleteMission(galleryMission.id))}
+                                                        onClick={(e) => triggerMissionCompleteFx(e.currentTarget, gallerySpec.rawRGB, galleryMission.carId, galleryMissionType.xp, () => handleCompleteMission(galleryMission.id, false))}
                                                         className="w-full py-2.5 rounded-xl bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-black text-[11px] font-black uppercase tracking-wider transition-all font-sans shadow-[0_4px_16px_rgba(16,185,129,0.3)]"
                                                     >
                                                         {galleryMissionType.actionLabel}
@@ -5106,7 +5322,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                             onClick={(e) => {
                                                                 const willComplete = (galleryMission.progress || 0) + 1 >= galleryMissionType.getTarget(galleryMission.params || {});
                                                                 if (willComplete) {
-                                                                    triggerMissionCompleteFx(e.currentTarget, gallerySpec.rawRGB, () => handleIncrementCounterMission(galleryMission));
+                                                                    triggerMissionCompleteFx(e.currentTarget, gallerySpec.rawRGB, galleryMission.carId, galleryMissionType.xp, () => handleIncrementCounterMission(galleryMission, false));
                                                                 } else {
                                                                     handleIncrementCounterMission(galleryMission);
                                                                 }
@@ -5129,7 +5345,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                                     const target = galleryMissionType.getTarget(galleryMission.params || {});
                                                                     const willComplete = (galleryMission.cutCount || 0) + 1 + (galleryMission.overtakeCount || 0) * 2 >= target;
                                                                     if (willComplete) {
-                                                                        triggerMissionCompleteFx(e.currentTarget, gallerySpec.rawRGB, () => handleCutProgress(galleryMission, 'cut'));
+                                                                        triggerMissionCompleteFx(e.currentTarget, gallerySpec.rawRGB, galleryMission.carId, galleryMissionType.xp, () => handleCutProgress(galleryMission, 'cut', false));
                                                                     } else {
                                                                         handleCutProgress(galleryMission, 'cut');
                                                                     }
@@ -5143,7 +5359,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                                     const target = galleryMissionType.getTarget(galleryMission.params || {});
                                                                     const willComplete = (galleryMission.cutCount || 0) + ((galleryMission.overtakeCount || 0) + 1) * 2 >= target;
                                                                     if (willComplete) {
-                                                                        triggerMissionCompleteFx(e.currentTarget, gallerySpec.rawRGB, () => handleCutProgress(galleryMission, 'overtake'));
+                                                                        triggerMissionCompleteFx(e.currentTarget, gallerySpec.rawRGB, galleryMission.carId, galleryMissionType.xp, () => handleCutProgress(galleryMission, 'overtake', false));
                                                                     } else {
                                                                         handleCutProgress(galleryMission, 'overtake');
                                                                     }
@@ -5636,6 +5852,94 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                         >
                                             Delete "{paletteContextMenu.name}"
                                         </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {isPriceOverviewOpen && (
+                                <div className="fixed inset-0 z-[190] flex items-center justify-center p-6">
+                                    <div className="absolute inset-0 bg-black/90 backdrop-blur-sm" onClick={() => setIsPriceOverviewOpen(false)} />
+                                    <div className="relative bg-[#121318] border border-white/10 rounded-3xl w-full max-w-4xl max-h-[85vh] shadow-[0_24px_80px_rgba(0,0,0,0.9)] flex flex-col overflow-hidden">
+                                        <div className="p-6 pb-4 flex items-center justify-between border-b border-white/[0.06] shrink-0">
+                                            <div>
+                                                <h3 className="text-lg font-black font-['Montserrat']">Price Overview</h3>
+                                                <p className="text-[11px] text-white/40 font-sans mt-0.5">Every car's buy vs. estimated sell price</p>
+                                            </div>
+                                            <button onClick={() => setIsPriceOverviewOpen(false)} className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors">
+                                                <span className="material-symbols-outlined text-[18px] text-white/60">close</span>
+                                            </button>
+                                        </div>
+
+                                        <div className="px-6 py-4 grid grid-cols-2 gap-4 border-b border-white/[0.06] shrink-0">
+                                            <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-4">
+                                                <span className="text-[10px] text-emerald-400/70 font-bold uppercase tracking-wider font-sans">Total Buy Price</span>
+                                                <div className="text-xl font-black text-emerald-400 font-sans mt-1">${priceOverviewTotals.buy.toLocaleString()}</div>
+                                            </div>
+                                            <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4">
+                                                <span className="text-[10px] text-red-400/70 font-bold uppercase tracking-wider font-sans">Total Sell Price</span>
+                                                <div className="text-xl font-black text-red-400 font-sans mt-1">${priceOverviewTotals.sell.toLocaleString()}</div>
+                                            </div>
+                                        </div>
+
+                                        <div className="px-6 pt-3 pb-2 flex items-center gap-1 text-[10px] text-white/40 font-bold uppercase tracking-wider font-sans border-b border-white/[0.06] shrink-0">
+                                            <div className="w-10 shrink-0"></div>
+                                            {[
+                                                { key: 'Level', cls: 'w-14 justify-center' },
+                                                { key: 'Name', cls: 'flex-1' },
+                                                { key: 'Year', cls: 'w-14 justify-center' },
+                                                { key: 'Buy Price', cls: 'w-28 justify-end' },
+                                                { key: 'Sell Price', cls: 'w-28 justify-end' }
+                                            ].map(col => (
+                                                <button
+                                                    key={col.key}
+                                                    onClick={() => {
+                                                        if (priceSortBy === col.key) setPriceSortDir(d => d === 'desc' ? 'asc' : 'desc');
+                                                        else { setPriceSortBy(col.key); setPriceSortDir('desc'); }
+                                                    }}
+                                                    className={`${col.cls} shrink-0 flex items-center gap-0.5 hover:text-white/80 transition-colors ${priceSortBy === col.key ? 'text-white' : ''}`}
+                                                >
+                                                    {col.key}
+                                                    {priceSortBy === col.key && (
+                                                        <span className="material-symbols-outlined text-[12px]">{priceSortDir === 'desc' ? 'arrow_downward' : 'arrow_upward'}</span>
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        <div ref={priceOverviewScrollRef} className="flex-1 overflow-y-auto px-6 py-3 flex flex-col gap-1">
+                                            {priceOverviewRows.map(({ car, level, sellPrice }) => {
+                                                const badgeStyles = getLevelBadgeStyles(level);
+                                                return (
+                                                    <div key={car.id} className="flex items-center gap-1 py-2 border-b border-white/[0.03] last:border-0">
+                                                        <div className="w-10 h-10 rounded-lg bg-black/30 flex items-center justify-center overflow-hidden shrink-0 mr-2">
+                                                            {car.image ? (
+                                                                <img src={car.image} alt="" loading="lazy" decoding="async" className="w-full h-full object-contain" />
+                                                            ) : (
+                                                                <span className="material-symbols-outlined text-[16px] text-white/20">directions_car</span>
+                                                            )}
+                                                        </div>
+                                                        <div className="w-14 flex justify-center shrink-0">
+                                                            <span
+                                                                style={{ backgroundColor: badgeStyles.bg, color: badgeStyles.text, borderColor: badgeStyles.border }}
+                                                                className="text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase font-sans"
+                                                            >
+                                                                {level === 'Permbanned' ? <span className="material-symbols-outlined text-[11px] leading-none align-middle">block</span> : (level === 'Level 0' ? '0' : level)}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex-1 min-w-0 pr-2">
+                                                            <div className="text-[12px] font-bold text-white truncate font-sans">{car.brand} {car.modelName}</div>
+                                                            {car.trim && <div className="text-[10px] text-white/40 truncate font-sans">{car.trim}</div>}
+                                                        </div>
+                                                        <div className="w-14 text-center text-[11px] text-white/50 font-sans shrink-0">{car.year}</div>
+                                                        <div className="w-28 text-right text-[12px] font-bold text-emerald-400 font-sans shrink-0">${(car.cost || 0).toLocaleString()}</div>
+                                                        <div className="w-28 text-right text-[12px] font-bold text-red-400 font-sans shrink-0">${sellPrice.toLocaleString()}</div>
+                                                    </div>
+                                                );
+                                            })}
+                                            {priceOverviewRows.length === 0 && (
+                                                <div className="text-center py-16 text-white/30 text-sm font-sans">No cars in your garage yet.</div>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                             )}
