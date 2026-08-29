@@ -3850,22 +3850,68 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 }
             };
 
-            const handleDownloadLocalBackup = () => {
+            const handleDownloadLocalBackup = async () => {
                 try {
-                    // JSON.stringify(garage) on the WHOLE array at once used to
-                    // build one single giant JS string -- once there were enough
-                    // cars with photos in them, that string could actually blow
-                    // past the JS engine's hard max string length and throw
-                    // (RangeError: Invalid string length). Stringifying each car
-                    // separately and handing Blob an ARRAY of the pieces avoids
-                    // that entirely -- Blob concatenates them internally without
-                    // ever needing one string that big to exist at once.
-                    const chunks = ['['];
-                    garage.forEach((car, i) => {
-                        chunks.push(JSON.stringify(car));
-                        if (i < garage.length - 1) chunks.push(',');
+                    showNotification("Gathering full-quality photos for backup...");
+
+                    // Every photo has a small "display" copy that lives in the
+                    // car data (and is all that ever ended up in this JSON
+                    // export before) plus a separate, much higher quality copy
+                    // tucked away in IndexedDB under a hash of the display
+                    // copy. Up until now the full-quality copies never made it
+                    // into the backup file at all -- so restoring a backup, or
+                    // moving to a different browser, only ever brought back
+                    // the smaller on-screen photos and quietly lost the good
+                    // ones for downloads. This pulls the true full-quality
+                    // copy for every photo in the garage and bundles it in.
+                    const fullRes = {};
+                    const validCars = garage.filter(Boolean); // guards against a stray empty slot ever making it into the array
+                    for (const car of validCars) {
+                        const allPics = [car.image, ...(car.images || [])].filter(Boolean);
+                        for (const pic of allPics) {
+                            const hash = simpleImageHash(pic);
+                            if (fullRes[hash]) continue;
+                            try {
+                                const full = await idbGet(`fullres_${hash}`);
+                                if (full) fullRes[hash] = full;
+                            } catch (e) {
+                                // No full-quality copy stashed for this one photo --
+                                // not fatal, its display copy still gets backed up.
+                            }
+                        }
+                    }
+
+                    // JSON.stringify() on one giant object used to build one
+                    // single huge JS string -- once there were enough cars with
+                    // photos in them, that string could blow past the JS
+                    // engine's hard max string length and throw (RangeError:
+                    // Invalid string length). Building the file as chunks and
+                    // handing Blob an ARRAY of the pieces avoids that entirely --
+                    // Blob concatenates them internally without ever needing one
+                    // string that big to exist at once.
+                    const chunks = ['{"__okgarageBackup":true,"version":2,"garage":['];
+                    validCars.forEach((car) => {
+                        const piece = JSON.stringify(car);
+                        // JSON.stringify only comes back as undefined (the JS
+                        // value, not the text "undefined") for something
+                        // genuinely broken, like a function slipping into the
+                        // data. Writing that into the file would silently
+                        // corrupt the whole backup -- Blob has to convert
+                        // anything that isn't already text, and it turns real
+                        // `undefined` into the literal word undefined, which
+                        // isn't valid JSON and breaks every import from then
+                        // on. Skipping just that one car is far safer than
+                        // corrupting the entire file.
+                        if (typeof piece === 'string') {
+                            chunks.push(piece);
+                            chunks.push(',');
+                        }
                     });
-                    chunks.push(']');
+                    if (chunks[chunks.length - 1] === ',') chunks.pop();
+                    chunks.push('],"fullRes":');
+                    chunks.push(JSON.stringify(fullRes));
+                    chunks.push('}');
+
                     const blob = new Blob(chunks, { type: 'application/json' });
                     const url = URL.createObjectURL(blob);
                     const dlAnchorElem = document.createElement('a');
@@ -3873,7 +3919,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     dlAnchorElem.download = `okgarage_backup_${Date.now()}.json`;
                     dlAnchorElem.click();
                     setTimeout(() => URL.revokeObjectURL(url), 5000);
-                    showNotification("Backup saved directly.");
+                    showNotification("Backup saved -- full-quality photos included.");
                 } catch (e) {
                     console.error("Backup failed: ", e);
                     showNotification("Backup failed -- try closing other tabs and retrying, your garage data is large.");
@@ -3888,55 +3934,100 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 reader.onload = async (event) => {
                     try {
                         const parsed = JSON.parse(event.target.result);
+
+                        // Two shapes are accepted: older backups are just a
+                        // bare array of cars. Newer backups (from the fix
+                        // above) are wrapped in an object so they can also
+                        // carry the full-quality photo copies alongside the
+                        // garage list.
+                        let rawCars = null;
+                        let fullResMap = {};
                         if (Array.isArray(parsed)) {
-                            showNotification("Converting schemas and compressing images...");
-                            
-                            // Safe decompression parsing
-                            const sanitized = await Promise.all(parsed.map(async (car, idx) => {
-                                let brand = car.brand || "";
-                                let modelName = car.modelName || "";
-                                if (!brand && !modelName && car.makeModel) {
-                                    const words = car.makeModel.split(' ');
-                                    brand = words[0] || "Concept";
-                                    modelName = words.slice(1).join(' ') || "Machine";
-                                }
-
-                                let compressedImg = car.image || "";
-                                if (compressedImg && compressedImg.startsWith("data:image")) {
-                                    compressedImg = await compressBase64(compressedImg);
-                                }
-
-                                let compressedImages = [];
-                                if (car.images && car.images.length > 0) {
-                                    compressedImages = await Promise.all(car.images.map(async (img) => {
-                                        if (img && img.startsWith("data:image")) {
-                                            return await compressWithFullRes(
-                                                img,
-                                                { w: 1400, h: 1050, q: 0.85 },
-                                                { w: 3200, h: 2400, q: 0.95 }
-                                            );
-                                        }
-                                        return img;
-                                    }));
-                                }
-
-                                return {
-                                    ...car,
-                                    brand,
-                                    modelName,
-                                    image: compressedImg,
-                                    images: compressedImages,
-                                    id: car.id || (Date.now() + idx)
-                                };
-                            }));
-
-                            setGarage(sanitized);
-                            showNotification("Local backup restored successfully.");
-                        } else {
-                            showNotification("Invalid file format.");
+                            rawCars = parsed;
+                        } else if (parsed && Array.isArray(parsed.garage)) {
+                            rawCars = parsed.garage;
+                            fullResMap = parsed.fullRes || {};
                         }
+
+                        if (!rawCars) {
+                            showNotification("Invalid file format.");
+                            return;
+                        }
+
+                        showNotification("Restoring your garage...");
+
+                        // This used to re-compress EVERY photo on every single
+                        // import, even ones that were already the right size
+                        // straight from this app's own export -- meaning every
+                        // restore (or move to a new browser) quietly lost a bit
+                        // of quality on top of the display copy already being
+                        // smaller than the original. Now a photo only gets
+                        // recompressed if it's actually oversized -- a genuinely
+                        // old/raw photo from before compression existed --
+                        // otherwise it's left completely untouched.
+                        const RAW_IMAGE_THRESHOLD_BYTES = 3 * 1024 * 1024; // ~3MB -- comfortably above anything this app itself ever produces as a "display" copy
+                        const sanitized = await Promise.all(rawCars.filter(Boolean).map(async (car, idx) => {
+                            let brand = car.brand || "";
+                            let modelName = car.modelName || "";
+                            if (!brand && !modelName && car.makeModel) {
+                                const words = car.makeModel.split(' ');
+                                brand = words[0] || "Concept";
+                                modelName = words.slice(1).join(' ') || "Machine";
+                            }
+
+                            let finalImg = car.image || "";
+                            if (finalImg && finalImg.startsWith("data:image") && estimateBase64Bytes(finalImg) > RAW_IMAGE_THRESHOLD_BYTES) {
+                                finalImg = await compressBase64(finalImg, 1200, 900, 0.92);
+                            }
+
+                            let finalImages = [];
+                            if (car.images && car.images.length > 0) {
+                                finalImages = await Promise.all(car.images.map(async (img) => {
+                                    if (img && img.startsWith("data:image") && estimateBase64Bytes(img) > RAW_IMAGE_THRESHOLD_BYTES) {
+                                        return await compressBase64(img, 1400, 1050, 0.85);
+                                    }
+                                    return img;
+                                }));
+                            }
+
+                            return {
+                                ...car,
+                                brand,
+                                modelName,
+                                image: finalImg,
+                                images: finalImages,
+                                id: car.id || (Date.now() + idx)
+                            };
+                        }));
+
+                        // Restore the true full-quality photo copies straight
+                        // into this browser's own IndexedDB, under the same
+                        // hash key the app already uses to find them for
+                        // downloads. Because the display photos above were
+                        // carried over untouched (not recompressed), their
+                        // hashes still line up with the ones in fullResMap --
+                        // this is what actually brings your download-quality
+                        // photos over to a new browser, not just the smaller
+                        // on-screen copies.
+                        const fullResEntries = Object.entries(fullResMap);
+                        if (fullResEntries.length > 0) {
+                            await Promise.all(fullResEntries.map(([hash, dataUrl]) =>
+                                idbSet(`fullres_${hash}`, dataUrl).catch(() => {})
+                            ));
+                        }
+
+                        setGarage(sanitized);
+                        showNotification(
+                            fullResEntries.length > 0
+                                ? "Garage restored -- full-quality photos included."
+                                : "Garage restored. (No full-quality photo data was in this file, so downloads will use the on-screen copies instead.)"
+                        );
                     } catch (err) {
-                        showNotification("Incorrect configuration file format.");
+                        // Show the REAL reason instead of a generic message --
+                        // this is exactly what was hiding what actually went
+                        // wrong before.
+                        console.error("Import failed:", err);
+                        showNotification(`Import failed: ${err.message || "couldn't read that file as backup data"}.`);
                     }
                 };
                 reader.readAsText(file);
