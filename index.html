@@ -1489,15 +1489,15 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     className="w-full relative rounded-xl"
                     style={{ height: itemHeight, overflow: 'hidden', WebkitMaskImage: fadeMask, maskImage: fadeMask }}
                 >
-                    {stripItems.length > 0 ? (
-                        <div ref={trackRef} className="flex flex-col will-change-transform">
-                            {stripItems.map((item, i) => (
+                    <div ref={trackRef} className="flex flex-col will-change-transform">
+                        {stripItems.length > 0 ? (
+                            stripItems.map((item, i) => (
                                 <ReelItemContent key={i} item={item} itemHeight={itemHeight} />
-                            ))}
-                        </div>
-                    ) : (
-                        <ReelItemContent item={finalValue} itemHeight={itemHeight} />
-                    )}
+                            ))
+                        ) : (
+                            <ReelItemContent item={finalValue} itemHeight={itemHeight} />
+                        )}
+                    </div>
                 </div>
             );
         };
@@ -1649,6 +1649,38 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
             const remaining = isRunning ? Math.max(0, durationMs - (Date.now() - startTime)) : durationMs;
             return <span className="text-xl font-mono font-black text-white tabular-nums">{formatFn(remaining)}</span>;
+        };
+
+        // Animates a number counting up (or down) from whatever it was to a
+        // new target value whenever `value` changes, instead of the digits
+        // just jumping straight to the new total. Ticks its own local state
+        // via rAF -- isolated the same way as the other Live* components, so
+        // it doesn't force anything else in the app to re-render.
+        const CountUpNumber = ({ value, prefix = '', duration = 700 }) => {
+            const [displayValue, setDisplayValue] = useState(value);
+            const fromRef = useRef(value);
+
+            useEffect(() => {
+                const from = fromRef.current;
+                const to = value;
+                if (from === to) return;
+                const start = performance.now();
+                let rafId = null;
+                const tick = (now) => {
+                    const progress = Math.min(1, (now - start) / duration);
+                    const eased = 1 - Math.pow(1 - progress, 3); // ease-out
+                    setDisplayValue(Math.round(from + (to - from) * eased));
+                    if (progress < 1) {
+                        rafId = requestAnimationFrame(tick);
+                    } else {
+                        fromRef.current = to;
+                    }
+                };
+                rafId = requestAnimationFrame(tick);
+                return () => { if (rafId) cancelAnimationFrame(rafId); };
+            }, [value]);
+
+            return <>{prefix}{displayValue.toLocaleString()}</>;
         };
 
         // A single car card on the main garage grid, split out into its own
@@ -2257,6 +2289,8 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             const [currentCar, setCurrentCar] = useState(null);
             const [isAiImportOpen, setIsAiImportOpen] = useState(false);
             const [isDataMenuOpen, setIsDataMenuOpen] = useState(false);
+            const backupBtnRef = useRef(null);
+            const [dataMenuPos, setDataMenuPos] = useState({ top: 0, right: 0 });
             const importFileInputRef = useRef(null);
             const [isPriceOverviewOpen, setIsPriceOverviewOpen] = useState(false);
             const [priceSortBy, setPriceSortBy] = useState('Buy Price');
@@ -2564,7 +2598,17 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     }
                 };
 
-                saveToStorage();
+                // Debounced: wait a beat after the LAST garage change before
+                // actually persisting. Without this, a burst of rapid
+                // updates (like the 16 individual XP increments landing one
+                // at a time from a single mission's particle burst, over a
+                // few seconds) used to trigger 16 SEPARATE full saves --
+                // each one writing the entire garage back to IndexedDB (and,
+                // if cloud sync is on, looping through every car writing to
+                // Firestore one document at a time). That was the actual
+                // cause of everything getting laggy while the XP bar filled.
+                const timeoutId = setTimeout(() => { saveToStorage(); }, 800);
+                return () => clearTimeout(timeoutId);
             }, [garage, isInitialized, cloudSavingActive]);
 
             // Save palette options
@@ -3808,14 +3852,31 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
             const handleDownloadLocalBackup = () => {
                 try {
-                    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(garage));
+                    // JSON.stringify(garage) on the WHOLE array at once used to
+                    // build one single giant JS string -- once there were enough
+                    // cars with photos in them, that string could actually blow
+                    // past the JS engine's hard max string length and throw
+                    // (RangeError: Invalid string length). Stringifying each car
+                    // separately and handing Blob an ARRAY of the pieces avoids
+                    // that entirely -- Blob concatenates them internally without
+                    // ever needing one string that big to exist at once.
+                    const chunks = ['['];
+                    garage.forEach((car, i) => {
+                        chunks.push(JSON.stringify(car));
+                        if (i < garage.length - 1) chunks.push(',');
+                    });
+                    chunks.push(']');
+                    const blob = new Blob(chunks, { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
                     const dlAnchorElem = document.createElement('a');
-                    dlAnchorElem.setAttribute("href", dataStr);
-                    dlAnchorElem.setAttribute("download", `okgarage_backup_${Date.now()}.json`);
+                    dlAnchorElem.href = url;
+                    dlAnchorElem.download = `okgarage_backup_${Date.now()}.json`;
                     dlAnchorElem.click();
+                    setTimeout(() => URL.revokeObjectURL(url), 5000);
                     showNotification("Backup saved directly.");
                 } catch (e) {
                     console.error("Backup failed: ", e);
+                    showNotification("Backup failed -- try closing other tabs and retrying, your garage data is large.");
                 }
             };
 
@@ -4584,14 +4645,35 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                         </div>
                         <div className="flex gap-3">
                             <div className="relative">
-                                <button onClick={() => setIsDataMenuOpen(v => !v)} className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5">
+                                <button
+                                    ref={backupBtnRef}
+                                    onClick={() => {
+                                        if (!isDataMenuOpen && backupBtnRef.current) {
+                                            const rect = backupBtnRef.current.getBoundingClientRect();
+                                            setDataMenuPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
+                                        }
+                                        setIsDataMenuOpen(v => !v);
+                                    }}
+                                    className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5"
+                                >
                                     <span className="material-symbols-outlined text-[15px]">swap_vert</span>
                                     Backup Data
                                 </button>
-                                {isDataMenuOpen && (
+                                {isDataMenuOpen && ReactDOM.createPortal(
                                     <>
-                                        <div className="fixed inset-0 z-40" onClick={() => setIsDataMenuOpen(false)} />
-                                        <div className="absolute top-12 right-0 z-50 w-52 bg-[#15161b] border border-white/10 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.7)] p-1.5 flex flex-col gap-1">
+                                        {/* Rendered via a portal straight into <body>, deliberately
+                                            escaping the header's own z-10 stacking context -- nesting
+                                            this dropdown inside the header was causing it to render
+                                            behind/blended with other header content (see-through
+                                            background) and, worse, its full-screen click-catcher could
+                                            end up silently eating clicks meant for buttons sitting
+                                            beside it (like Price Overview) whenever stacking got
+                                            confused. Portaling to body sidesteps all of that. */}
+                                        <div className="fixed inset-0 z-[200]" onClick={() => setIsDataMenuOpen(false)} />
+                                        <div
+                                            style={{ top: dataMenuPos.top, right: dataMenuPos.right }}
+                                            className="fixed z-[201] w-52 bg-[#15161b] border border-white/10 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.7)] p-1.5 flex flex-col gap-1"
+                                        >
                                             <button
                                                 onClick={() => { handleDownloadLocalBackup(); setIsDataMenuOpen(false); }}
                                                 className="text-left px-3 py-2.5 rounded-xl hover:bg-white/5 text-[12px] font-semibold text-white/80 flex items-center gap-2 transition-colors"
@@ -4607,7 +4689,8 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                 Import JSON File
                                             </button>
                                         </div>
-                                    </>
+                                    </>,
+                                    document.body
                                 )}
                                 <input ref={importFileInputRef} type="file" accept=".json" onChange={handleImportLocalFile} className="hidden" />
                             </div>
@@ -4784,7 +4867,20 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                 <button 
                                                     key={cat}
                                                     ref={el => sortRefs.current[cat] = el}
-                                                    onClick={() => { setGarageSortBy(cat); setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc'); }}
+                                                    onClick={() => {
+                                                        if (garageSortBy === cat) {
+                                                            setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+                                                        } else {
+                                                            // Switching to a DIFFERENT category should always start
+                                                            // from a sane default (highest first) -- it used to just
+                                                            // toggle whatever direction the PREVIOUS category was
+                                                            // left on, so clicking "XP" right after Year (desc) could
+                                                            // silently flip to ascending and bury high-XP cars at
+                                                            // the bottom instead of showing them at the top.
+                                                            setGarageSortBy(cat);
+                                                            setSortDirection('desc');
+                                                        }
+                                                    }}
                                                     className={`px-3 py-1 rounded-[8px] font-medium transition-colors relative z-10 whitespace-nowrap flex-shrink-0 ${garageSortBy === cat ? 'text-white' : 'text-white/50 hover:text-white/80'}`}
                                                 >
                                                     {cat}
@@ -5096,7 +5192,6 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                     [SPEC_ICONS.country, 'Country', selectedGalleryCar.country || '—', 'text-white'],
                                                     [SPEC_ICONS.fuel, 'Fuel', selectedGalleryCar.fuel || '—', 'text-white'],
                                                     [SPEC_ICONS.canTow, 'Can Tow', selectedGalleryCar.canTow ? 'Yes' : 'No', selectedGalleryCar.canTow ? 'text-emerald-400' : 'text-white/40'],
-                                                    [SPEC_ICONS.hasCruiseControl, 'Cruise Control', selectedGalleryCar.hasCruiseControl ? 'Yes' : 'No', selectedGalleryCar.hasCruiseControl ? 'text-emerald-400' : 'text-white/40'],
                                                     [SPEC_ICONS.hasCruiseControl, 'Driving Assist', selectedGalleryCar.hasDrivingAssist ? 'Yes' : 'No', selectedGalleryCar.hasDrivingAssist ? 'text-emerald-400' : 'text-white/40', true],
                                                     [SPEC_ICONS.engineType, 'Engine', selectedGalleryCar.engineType || '—', 'text-white', false, true],
                                                     [SPEC_ICONS.transmission, 'Transmission', selectedGalleryCar.transmission || '—', 'text-white', false, true]
@@ -5873,11 +5968,11 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                         <div className="px-6 py-4 grid grid-cols-2 gap-4 border-b border-white/[0.06] shrink-0">
                                             <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-4">
                                                 <span className="text-[10px] text-emerald-400/70 font-bold uppercase tracking-wider font-sans">Total Buy Price</span>
-                                                <div className="text-xl font-black text-emerald-400 font-sans mt-1">${priceOverviewTotals.buy.toLocaleString()}</div>
+                                                <div className="text-xl font-black text-emerald-400 font-sans mt-1"><CountUpNumber value={priceOverviewTotals.buy} prefix="$" /></div>
                                             </div>
                                             <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4">
                                                 <span className="text-[10px] text-red-400/70 font-bold uppercase tracking-wider font-sans">Total Sell Price</span>
-                                                <div className="text-xl font-black text-red-400 font-sans mt-1">${priceOverviewTotals.sell.toLocaleString()}</div>
+                                                <div className="text-xl font-black text-red-400 font-sans mt-1"><CountUpNumber value={priceOverviewTotals.sell} prefix="$" /></div>
                                             </div>
                                         </div>
 
