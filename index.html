@@ -2292,6 +2292,14 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             const backupBtnRef = useRef(null);
             const [dataMenuPos, setDataMenuPos] = useState({ top: 0, right: 0 });
             const importFileInputRef = useRef(null);
+            // Holds the Blob URL for the most recent backup download so it can be
+            // revoked safely -- see handleDownloadLocalBackup for why this matters.
+            const lastBackupUrlRef = useRef(null);
+            useEffect(() => {
+                return () => {
+                    if (lastBackupUrlRef.current) URL.revokeObjectURL(lastBackupUrlRef.current);
+                };
+            }, []);
             const [isPriceOverviewOpen, setIsPriceOverviewOpen] = useState(false);
             const [priceSortBy, setPriceSortBy] = useState('Buy Price');
             const [priceSortDir, setPriceSortDir] = useState('desc');
@@ -3866,18 +3874,26 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     // copy for every photo in the garage and bundles it in.
                     const fullRes = {};
                     const validCars = garage.filter(Boolean); // guards against a stray empty slot ever making it into the array
-                    for (const car of validCars) {
+                    const allHashesNeeded = [];
+                    validCars.forEach((car) => {
                         const allPics = [car.image, ...(car.images || [])].filter(Boolean);
-                        for (const pic of allPics) {
-                            const hash = simpleImageHash(pic);
-                            if (fullRes[hash]) continue;
-                            try {
-                                const full = await idbGet(`fullres_${hash}`);
-                                if (full) fullRes[hash] = full;
-                            } catch (e) {
-                                // No full-quality copy stashed for this one photo --
-                                // not fatal, its display copy still gets backed up.
-                            }
+                        allPics.forEach((pic) => allHashesNeeded.push(simpleImageHash(pic)));
+                    });
+                    const uniqueHashes = [...new Set(allHashesNeeded)];
+                    // On a big garage this loop can take a while -- showing a running
+                    // count here so it's obvious the app is still working and not
+                    // just frozen (this used to give zero feedback the whole time).
+                    for (let i = 0; i < uniqueHashes.length; i++) {
+                        const hash = uniqueHashes[i];
+                        try {
+                            const full = await idbGet(`fullres_${hash}`);
+                            if (full) fullRes[hash] = full;
+                        } catch (e) {
+                            // No full-quality copy stashed for this one photo --
+                            // not fatal, its display copy still gets backed up.
+                        }
+                        if (i % 25 === 0 || i === uniqueHashes.length - 1) {
+                            showNotification(`Gathering full-quality photos... ${i + 1}/${uniqueHashes.length}`);
                         }
                     }
 
@@ -3914,11 +3930,30 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
                     const blob = new Blob(chunks, { type: 'application/json' });
                     const url = URL.createObjectURL(blob);
+
+                    // THE ACTUAL BUG that was truncating your backup file:
+                    // this used to call URL.revokeObjectURL(url) on a flat 5-second
+                    // timer, no matter what. Revoking throws away the underlying
+                    // data immediately. For a small file, 5 seconds is way more
+                    // than enough time for the browser to finish saving it to disk
+                    // -- but for a backup this large (500MB+), actually writing it
+                    // out can take much longer than 5 seconds. When the timer fired
+                    // before the browser was done, it yanked the data out from
+                    // under an in-progress download, leaving a file that just stops
+                    // partway through -- exactly what "Unexpected end of JSON
+                    // input" means, because the file's closing brackets never got
+                    // written. Now the old URL is only revoked right before the
+                    // NEXT backup is made (or when the page closes), so a download
+                    // always gets as long as it actually needs.
+                    if (lastBackupUrlRef.current) {
+                        URL.revokeObjectURL(lastBackupUrlRef.current);
+                    }
+                    lastBackupUrlRef.current = url;
+
                     const dlAnchorElem = document.createElement('a');
                     dlAnchorElem.href = url;
                     dlAnchorElem.download = `okgarage_backup_${Date.now()}.json`;
                     dlAnchorElem.click();
-                    setTimeout(() => URL.revokeObjectURL(url), 5000);
                     showNotification("Backup saved -- full-quality photos included.");
                 } catch (e) {
                     console.error("Backup failed: ", e);
