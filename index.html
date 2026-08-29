@@ -3882,20 +3882,23 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
                     const validCars = garage.filter(Boolean); // guards against a stray empty slot ever making it into the array
 
-                    // ---- FILE 1: the garage list itself ----
-                    // This file only ever holds the small "display" copies of your
-                    // photos (the ones already used on cards/galleries every day),
-                    // so it stays a reasonable size and is fast and safe to save
-                    // and restore no matter how big your garage gets.
+                    // ---- FILE(S) 1: the garage list itself ----
+                    // Last time only the full-quality photo pack files got split
+                    // into safe-sized pieces -- this garage file was still being
+                    // built as ONE file no matter how big it got. Turns out with
+                    // display photos on every car, this file can also grow huge on
+                    // a big garage, and hit the exact same "too big to reliably
+                    // build/download/read back" wall -- which is exactly why it
+                    // came out the other end missing its ending again. So now this
+                    // file gets split the same safe way the photo files already do.
                     //
                     // JSON.stringify() on one giant object used to build one single
                     // huge JS string -- once there were enough cars, that string
                     // could blow past the JS engine's hard max string length and
-                    // throw (RangeError: Invalid string length). Building the file
-                    // as chunks and handing Blob an ARRAY of the pieces avoids that
-                    // entirely -- Blob concatenates them internally without ever
-                    // needing one string that big to exist at once.
-                    const chunks = ['{"__okgarageBackup":true,"version":3,"garage":['];
+                    // throw (RangeError: Invalid string length). Stringifying each
+                    // car separately and only ever joining small groups of them
+                    // avoids ever needing one string that big to exist at once.
+                    const carPieces = [];
                     validCars.forEach((car) => {
                         const piece = JSON.stringify(car);
                         // JSON.stringify only comes back as undefined (the JS
@@ -3903,21 +3906,45 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                         // broken, like a function slipping into the data. Writing
                         // that into the file would silently corrupt the whole
                         // backup, so skip just that one car instead.
-                        if (typeof piece === 'string') {
-                            chunks.push(piece);
-                            chunks.push(',');
-                        }
+                        if (typeof piece === 'string') carPieces.push(piece);
                     });
-                    if (chunks[chunks.length - 1] === ',') chunks.pop();
-                    chunks.push(']}');
-                    const garageBlob = new Blob(chunks, { type: 'application/json' });
-                    downloadBlob(garageBlob, `okgarage_backup_${Date.now()}.json`);
+
+                    const MAX_CHARS_PER_GARAGE_PART = 25_000_000; // ~25MB of text per garage file -- comfortably safe for any browser to build, download, and read back
+                    const garageParts = [];
+                    {
+                        let current = [];
+                        let currentChars = 0;
+                        for (const piece of carPieces) {
+                            if (currentChars > 0 && currentChars + piece.length > MAX_CHARS_PER_GARAGE_PART) {
+                                garageParts.push(current);
+                                current = [];
+                                currentChars = 0;
+                            }
+                            current.push(piece);
+                            currentChars += piece.length;
+                        }
+                        garageParts.push(current); // always at least one part, even if empty (an empty garage)
+                    }
+
+                    for (let p = 0; p < garageParts.length; p++) {
+                        const piecesForPart = garageParts[p];
+                        const partChunks = [`{"__okgarageBackup":true,"version":3,"part":${p + 1},"of":${garageParts.length},"garage":[`];
+                        piecesForPart.forEach((piece, i) => {
+                            partChunks.push(piece);
+                            if (i < piecesForPart.length - 1) partChunks.push(',');
+                        });
+                        partChunks.push(']}');
+                        const garageBlob = new Blob(partChunks, { type: 'application/json' });
+                        const suffix = garageParts.length > 1 ? `_part${p + 1}of${garageParts.length}` : '';
+                        downloadBlob(garageBlob, `okgarage_backup_${Date.now()}${suffix}.json`);
+                        await new Promise(res => setTimeout(res, 400));
+                    }
 
                     // ---- FILE(S) 2+: your full-quality photos ----
                     // THE ACTUAL BUG that was breaking your imports: every photo
-                    // has a small "display" copy (what's in the garage file above)
-                    // and a separate, much higher quality copy tucked away in
-                    // IndexedDB purely for downloads. Cramming ALL of those
+                    // has a small "display" copy (what's in the garage file(s)
+                    // above) and a separate, much higher quality copy tucked away
+                    // in IndexedDB purely for downloads. Cramming ALL of those
                     // full-quality copies into the SAME single file as the garage
                     // data is what produced a 500MB+ file -- and a single file
                     // that size pushes past what the browser can reliably build,
@@ -3929,8 +3956,9 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     // The real fix is to never build one file that large in the
                     // first place: your full-quality photos now go into several
                     // smaller files instead (each safely under ~40MB of data),
-                    // and you import ALL of the files together (the garage file
-                    // plus every photo file) in one go using "Import JSON File."
+                    // and you import ALL of the files together (every garage
+                    // file plus every photo file) in one go using "Import JSON
+                    // File."
                     const uniqueHashes = [...new Set(
                         validCars.flatMap(car => [car.image, ...(car.images || [])].filter(Boolean).map(simpleImageHash))
                     )];
@@ -3978,10 +4006,9 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                         await new Promise(res => setTimeout(res, 400));
                     }
 
+                    const totalFiles = garageParts.length + parts.length;
                     showNotification(
-                        parts.length > 0
-                            ? `Backup saved: 1 garage file + ${parts.length} photo file${parts.length > 1 ? 's' : ''}. Your browser may ask to allow multiple downloads -- allow it, then import ALL of the files together.`
-                            : "Backup saved (no full-quality photos were stashed yet, so just the garage file was needed)."
+                        `Backup saved as ${totalFiles} file${totalFiles > 1 ? 's' : ''} (${garageParts.length} garage + ${parts.length} photo). Your browser may ask to allow multiple downloads -- allow it, then select ALL of the files together when you Import.`
                     );
                 } catch (e) {
                     console.error("Backup failed: ", e);
@@ -4023,10 +4050,18 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
                         if (Array.isArray(parsed)) {
                             // Oldest backup shape: just a bare array of cars.
-                            rawCars = parsed;
+                            rawCars = (rawCars || []).concat(parsed);
                         } else if (parsed && Array.isArray(parsed.garage)) {
-                            // Wrapped garage file (version 2 or 3).
-                            rawCars = parsed.garage;
+                            // Wrapped garage file (version 2, or version 3 which
+                            // may be split across several "part"/"of" files) --
+                            // concatenate rather than overwrite, so selecting
+                            // several garage-part files together merges all of
+                            // them into one garage instead of only keeping the
+                            // last one read.
+                            if (parsed.of && parsed.of > 1) {
+                                showNotification(`Reading garage file -- part ${parsed.part || '?'} of ${parsed.of}...`);
+                            }
+                            rawCars = (rawCars || []).concat(parsed.garage);
                             // Version 2 backups embedded full-quality photos right
                             // in this same file -- still honor that if it's here.
                             if (parsed.fullRes) {
