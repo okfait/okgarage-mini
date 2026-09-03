@@ -1386,13 +1386,23 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
         // at a glance, not just read blurred text.
         const ReelItemContent = ({ item, itemHeight }) => {
             if (!item) return null;
+            // Both icon kinds now render at the SAME size (instead of two
+            // different multipliers that happened to look mismatched --
+            // Material Symbol glyphs fill their box almost edge-to-edge,
+            // while the imported PNG icons (car-type icons, car cover
+            // photos) tend to have blank padding baked into the source
+            // image itself, so at the old smaller size some of them were
+            // basically invisible behind the text). Bumping both up to the
+            // same larger fraction of the row makes every rail read the
+            // same regardless of which kind of icon it happens to use.
+            const iconSize = itemHeight * 0.82;
             return (
                 <div style={{ height: itemHeight }} className="relative flex items-center justify-center w-full">
                     {item.icon && item.icon.kind === 'image' && (
-                        <img src={item.icon.url} alt="" className="absolute inset-0 m-auto object-contain opacity-30 pointer-events-none" style={{ width: itemHeight * 0.62, height: itemHeight * 0.62 }} />
+                        <img src={item.icon.url} alt="" className="absolute inset-0 m-auto object-contain opacity-35 pointer-events-none" style={{ width: iconSize, height: iconSize }} />
                     )}
                     {item.icon && item.icon.kind === 'material' && (
-                        <span className="material-symbols-outlined absolute inset-0 flex items-center justify-center text-white/30 pointer-events-none" style={{ fontSize: itemHeight * 0.55 }}>{item.icon.name}</span>
+                        <span className="material-symbols-outlined absolute inset-0 flex items-center justify-center text-white/35 pointer-events-none" style={{ fontSize: iconSize }}>{item.icon.name}</span>
                     )}
                     <span className="relative z-10 text-xs font-black text-center font-sans leading-tight px-2 text-white truncate max-w-full">
                         {item.display}
@@ -2159,7 +2169,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
             const [garage, setGarage] = useState([]);
             const [isInitialized, setIsInitialized] = useState(false);
-            const [loadingReveal, setLoadingReveal] = useState({ show: true, loaded: 0, total: 0, exiting: false });
+            const [loadingReveal, setLoadingReveal] = useState({ show: true, loaded: 0, total: 0, exiting: false, images: [] });
             const [cloudSavingActive, setCloudSavingActive] = useState(false);
 
             // --- Chapter 4: missions ---
@@ -2271,6 +2281,45 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 }
             });
             const [garageSearch, setGarageSearch] = useState('');
+            // Hidden shortcut: Ctrl+ArrowDown shrinks the garage grid cards
+            // (fit more on screen at once), Ctrl+ArrowUp snaps back to normal
+            // size. Deliberately separate from the browser's own Ctrl+/-
+            // zoom, which scales the ENTIRE page (header, text, everything)
+            // instead of just the card grid. Remembered across reloads via
+            // localStorage so it doesn't reset every time the app opens.
+            const [gridScale, setGridScale] = useState(() => {
+                const saved = parseFloat(localStorage.getItem('gv_gridScale'));
+                return (!isNaN(saved) && saved >= 0.5 && saved <= 1) ? saved : 1;
+            });
+            const GRID_SCALE_MIN = 0.55;
+            const GRID_SCALE_STEP = 0.08;
+            useEffect(() => {
+                const onKeyDown = (e) => {
+                    if (!e.ctrlKey || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return;
+                    // Don't hijack Ctrl+arrows while someone's actually typing
+                    // somewhere (a search box, a form field, etc.) -- those
+                    // keys can mean something else in that context.
+                    const tag = document.activeElement?.tagName;
+                    if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
+
+                    if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setGridScale(prev => {
+                            const next = Math.max(GRID_SCALE_MIN, Math.round((prev - GRID_SCALE_STEP) * 100) / 100);
+                            localStorage.setItem('gv_gridScale', next);
+                            showNotification(`Card size: ${Math.round(next * 100)}%`);
+                            return next;
+                        });
+                    } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setGridScale(1);
+                        localStorage.setItem('gv_gridScale', '1');
+                        showNotification('Card size: 100% (normal)');
+                    }
+                };
+                window.addEventListener('keydown', onKeyDown);
+                return () => window.removeEventListener('keydown', onKeyDown);
+            }, []);
             const [debouncedGarageSearch, setDebouncedGarageSearch] = useState('');
             useEffect(() => {
                 const t = setTimeout(() => setDebouncedGarageSearch(garageSearch), 200);
@@ -2371,12 +2420,20 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
             // Animates the garage loading screen's counter/progress from 0 up
             // to the actual number of vehicles being loaded, so the "N / total"
-            // readout and the car icon riding the progress bar are always
-            // showing real data, not a generic spinner.
-            const runLoadingReveal = (total) => {
+            // readout is always showing real data, not a generic spinner.
+            // `images` (optional) are the actual car cover photos being
+            // loaded -- passing them in lets the loading screen spawn real
+            // thumbnails of YOUR cars fading in behind the counter instead of
+            // just a bare progress bar, which reads a lot more "this is
+            // loading something substantial" than a blank spinner does.
+            const runLoadingReveal = (total, images = []) => {
+                // More than ~24 floating thumbnails starts looking cluttered
+                // instead of premium, especially once a garage gets big --
+                // capping it keeps the effect readable no matter the garage size.
+                const spawnImages = images.filter(Boolean).slice(0, 24);
                 return new Promise((resolve) => {
                     if (total <= 0) {
-                        setLoadingReveal({ show: true, loaded: 0, total: 0 });
+                        setLoadingReveal({ show: true, loaded: 0, total: 0, images: spawnImages });
                         setTimeout(resolve, 350);
                         return;
                     }
@@ -2386,11 +2443,11 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                         const elapsed = now - start;
                         const progress = Math.min(1, elapsed / duration);
                         const loaded = Math.floor(progress * total);
-                        setLoadingReveal({ show: true, loaded, total });
+                        setLoadingReveal({ show: true, loaded, total, images: spawnImages });
                         if (progress < 1) {
                             requestAnimationFrame(tick);
                         } else {
-                            setLoadingReveal({ show: true, loaded: total, total });
+                            setLoadingReveal({ show: true, loaded: total, total, images: spawnImages });
                             setTimeout(resolve, 220);
                         }
                     };
@@ -2430,7 +2487,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                         snapshot.forEach(doc => {
                                             cars.push({ id: doc.id, ...doc.data() });
                                         });
-                                        await runLoadingReveal(cars.length);
+                                        await runLoadingReveal(cars.length, cars.map(c => c.image));
                                         setGarage(cars);
                                         setIsInitialized(true);
                                         setLoadingReveal(prev => ({ ...prev, exiting: true }));
@@ -2519,7 +2576,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     }
 
                     if (loadedGarage !== null) {
-                        await runLoadingReveal(loadedGarage.length);
+                        await runLoadingReveal(loadedGarage.length, loadedGarage.map(c => c.image));
                         setGarage(loadedGarage);
                     } else {
                         // Base template items
@@ -3091,6 +3148,32 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 const xpIntoLevel = total % MASTERY_XP_PER_LEVEL;
                 return { level, xpIntoLevel, xpPerLevel: MASTERY_XP_PER_LEVEL, progress: xpIntoLevel / MASTERY_XP_PER_LEVEL, total };
             }, []);
+
+            // Small at-a-glance stat chips shown right in the header row.
+            const quickStats = useMemo(() => {
+                const totalVehicles = garage.length;
+                const totalValue = garage.reduce((sum, c) => sum + (Number(c.cost) || 0), 0);
+                const avgLevel = totalVehicles > 0
+                    ? garage.reduce((sum, c) => sum + getMasteryLevel(c.masteryXp).level, 0) / totalVehicles
+                    : 0;
+                return { totalVehicles, totalValue, avgLevel };
+            }, [garage, getMasteryLevel]);
+
+            // Randomized (but STABLE) layout for the car thumbnails that spawn
+            // in behind the loading screen -- computed once per loading run
+            // (loadingReveal.images only changes identity when a new run
+            // starts, not on every progress tick), so the photos don't jitter
+            // around every frame, only fade in in place.
+            const loadingSpawnLayout = useMemo(() => {
+                return loadingReveal.images.map((src, i) => ({
+                    src,
+                    left: 6 + Math.random() * 88,
+                    top: 8 + Math.random() * 84,
+                    size: 70 + Math.random() * 90,
+                    rotate: (Math.random() - 0.5) * 16,
+                    delay: (i * 47) % 900,
+                }));
+            }, [loadingReveal.images]);
 
             const handleOpenAdd = () => {
                 setCurrentCar({
@@ -4767,6 +4850,40 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                         <div className={`fixed inset-0 z-[300] bg-[#07080b] flex flex-col items-center justify-center overflow-hidden ${loadingReveal.exiting ? 'loading-screen-exit' : ''}`}>
                             <div className="absolute inset-0 opacity-50" style={{ background: 'radial-gradient(circle at 50% 38%, rgba(16,185,129,0.14) 0%, transparent 60%)' }} />
 
+                            {/* Real cover photos from the garage being loaded, spawning
+                                in one by one as the counter progresses -- gives the
+                                loading screen an actual "your collection is being
+                                assembled" feel instead of just a bare spinner, which
+                                matters more the bigger (and slower to load) your
+                                garage gets. */}
+                            {loadingSpawnLayout.length > 0 && (
+                                <div className="absolute inset-0 z-0">
+                                    {loadingSpawnLayout.map((item, i) => {
+                                        const revealThreshold = loadingSpawnLayout.length > 0 ? (i / loadingSpawnLayout.length) : 1;
+                                        const progress = loadingReveal.total > 0 ? loadingReveal.loaded / loadingReveal.total : 0;
+                                        const revealed = progress >= revealThreshold;
+                                        return (
+                                            <div
+                                                key={i}
+                                                className="absolute rounded-2xl overflow-hidden border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.6)] transition-all ease-out"
+                                                style={{
+                                                    left: `${item.left}%`,
+                                                    top: `${item.top}%`,
+                                                    width: item.size,
+                                                    height: item.size * 0.68,
+                                                    transform: `translate(-50%, -50%) rotate(${item.rotate}deg) scale(${revealed ? 1 : 0.6})`,
+                                                    opacity: revealed ? 0.3 : 0,
+                                                    transitionDuration: '700ms',
+                                                    transitionDelay: `${item.delay}ms`
+                                                }}
+                                            >
+                                                <img src={item.src} alt="" className="w-full h-full object-contain bg-black/40" />
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
                             <div className="relative z-10 flex flex-col items-center gap-8 px-6 w-full max-w-xs">
                                 <div className="relative w-14 h-14 flex items-center justify-center">
                                     <div className="absolute inset-0 rounded-full border-2 border-emerald-400/20" />
@@ -4978,7 +5095,36 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                         <div className="flex items-center gap-3">
                             <h1 className="text-xl font-extrabold tracking-tight font-['Montserrat'] bg-gradient-to-r from-white via-white/80 to-white/60 bg-clip-text text-transparent">okGARAGE - mini</h1>
                         </div>
-                        <div className="flex gap-3">
+                        <div className="flex items-center gap-3">
+                            {/* Quick stats -- Backup Data and Delete All moved into the
+                                "More" menu on the right specifically to free up this row
+                                for these instead of cramming them in alongside everything
+                                else. */}
+                            <div className="flex items-center gap-2 mr-1">
+                                <div className="h-10 px-3.5 rounded-full bg-white/[0.03] border border-white/10 flex items-center gap-1.5" title="Total vehicles in your garage">
+                                    <span className="material-symbols-outlined text-[15px] text-white/40">directions_car</span>
+                                    <span className="text-[12px] font-bold text-white/80 font-sans">{quickStats.totalVehicles}</span>
+                                </div>
+                                <div className="h-10 px-3.5 rounded-full bg-white/[0.03] border border-white/10 flex items-center gap-1.5" title="Total buy price across your garage">
+                                    <span className="material-symbols-outlined text-[15px] text-emerald-400/70">payments</span>
+                                    <span className="text-[12px] font-bold text-emerald-400 font-sans">${quickStats.totalValue.toLocaleString()}</span>
+                                </div>
+                                <div className="h-10 px-3.5 rounded-full bg-white/[0.03] border border-white/10 flex items-center gap-1.5" title="Average Mastery level across your garage">
+                                    <span className="material-symbols-outlined text-[15px] text-white/40">military_tech</span>
+                                    <span className="text-[12px] font-bold text-white/80 font-sans">Lvl {quickStats.avgLevel.toFixed(1)}</span>
+                                </div>
+                            </div>
+                            <button onClick={() => setIsPriceOverviewOpen(true)} className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5">
+                                <span className="material-symbols-outlined text-[15px]">payments</span>
+                                Price Overview
+                            </button>
+                            <button onClick={() => setIsMissionHubOpen(true)} className="h-10 px-5 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[13px] font-semibold transition-all flex items-center gap-1.5">
+                                <img src={MISSION_ICON_URL} alt="" className="w-4 h-4 object-contain" style={{ filter: 'invert(64%) sepia(45%) saturate(600%) hue-rotate(100deg) brightness(95%)' }} />
+                                Mission
+                            </button>
+                            <button onClick={handleOpenAdd} className="h-10 px-6 rounded-full bg-[#181a20] hover:bg-[#20222a] text-white text-[13px] font-semibold border border-white/10 transition-all shadow-md">
+                                + Add Vehicle
+                            </button>
                             <div className="relative">
                                 <button
                                     ref={backupBtnRef}
@@ -4989,10 +5135,10 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                         }
                                         setIsDataMenuOpen(v => !v);
                                     }}
-                                    className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5"
+                                    className="h-10 w-10 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white transition-colors flex items-center justify-center"
+                                    title="More"
                                 >
-                                    <span className="material-symbols-outlined text-[15px]">swap_vert</span>
-                                    Backup Data
+                                    <span className="material-symbols-outlined text-[19px]">menu</span>
                                 </button>
                                 {isDataMenuOpen && ReactDOM.createPortal(
                                     <>
@@ -5007,8 +5153,9 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                         <div className="fixed inset-0 z-[200]" onClick={() => setIsDataMenuOpen(false)} />
                                         <div
                                             style={{ top: dataMenuPos.top, right: dataMenuPos.right }}
-                                            className="fixed z-[201] w-52 bg-[#15161b] border border-white/10 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.7)] p-1.5 flex flex-col gap-1"
+                                            className="fixed z-[201] w-56 bg-[#15161b] border border-white/10 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.7)] p-1.5 flex flex-col gap-1"
                                         >
+                                            <span className="px-3 pt-1.5 pb-1 text-[9px] font-black uppercase tracking-widest text-white/25 font-sans">Backup Data</span>
                                             <button
                                                 onClick={() => { handleDownloadLocalBackup(); setIsDataMenuOpen(false); }}
                                                 className="text-left px-3 py-2.5 rounded-xl hover:bg-white/5 text-[12px] font-semibold text-white/80 flex items-center gap-2 transition-colors"
@@ -5023,26 +5170,20 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                                 <span className="material-symbols-outlined text-[16px] text-sky-400">upload</span>
                                                 Import JSON File
                                             </button>
+                                            <div className="h-px bg-white/[0.06] my-1 mx-1" />
+                                            <button
+                                                onClick={() => { setIsDataMenuOpen(false); setIsDeleteAllConfirmOpen(true); }}
+                                                className="text-left px-3 py-2.5 rounded-xl hover:bg-red-500/10 text-[12px] font-semibold text-red-400 flex items-center gap-2 transition-colors"
+                                            >
+                                                <span className="material-symbols-outlined text-[16px]">delete_forever</span>
+                                                Delete All Vehicles
+                                            </button>
                                         </div>
                                     </>,
                                     document.body
                                 )}
                                 <input ref={importFileInputRef} type="file" accept=".json" multiple onChange={handleImportLocalFile} className="hidden" />
                             </div>
-                            <button onClick={() => setIsPriceOverviewOpen(true)} className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5">
-                                <span className="material-symbols-outlined text-[15px]">payments</span>
-                                Price Overview
-                            </button>
-                            <button onClick={() => setIsMissionHubOpen(true)} className="h-10 px-5 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[13px] font-semibold transition-all flex items-center gap-1.5">
-                                <img src={MISSION_ICON_URL} alt="" className="w-4 h-4 object-contain" style={{ filter: 'invert(64%) sepia(45%) saturate(600%) hue-rotate(100deg) brightness(95%)' }} />
-                                Mission
-                            </button>
-                            <button onClick={() => setIsDeleteAllConfirmOpen(true)} className="h-10 px-5 rounded-full bg-red-900/20 hover:bg-red-900/40 border border-red-500/30 text-red-400 text-[13px] font-semibold transition-all">
-                                Delete All Vehicles
-                            </button>
-                            <button onClick={handleOpenAdd} className="h-10 px-6 rounded-full bg-[#181a20] hover:bg-[#20222a] text-white text-[13px] font-semibold border border-white/10 transition-all shadow-md">
-                                + Add Vehicle
-                            </button>
                         </div>
                     </header>
 
@@ -5366,7 +5507,15 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
                                 {/* Staggered cascading entry on grid cards sorting */}
                                 <div ref={garageScrollRef} className="flex-1 overflow-y-auto pl-1 pr-1 pb-4 space-y-4 smooth-scroll">
-                                    <div className={`grid gap-4 ${garageGridClass}`}>
+                                    <div
+                                        className={`grid gap-4 ${garageGridClass}`}
+                                        style={{
+                                            transform: `scale(${gridScale})`,
+                                            transformOrigin: 'top left',
+                                            width: `${100 / gridScale}%`,
+                                            transition: 'transform 180ms ease-out, width 180ms ease-out'
+                                        }}
+                                    >
                                         {sortedGarage.map((car, gridIndex) => (
                                             <GarageCard
                                                 key={car.id}
@@ -6466,9 +6615,52 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             );
         }
 
+        // Safety net: if any part of the app throws while rendering (a bad
+        // car field, a broken image, anything), React's default behavior
+        // with no boundary is to unmount EVERYTHING and go blank -- which
+        // looks exactly like "I clicked a button and nothing happened,"
+        // when actually something did happen, it just crashed silently.
+        // This catches that, shows what broke instead of hiding it, and
+        // makes clear your actual garage data on disk is untouched by a
+        // display crash like this.
+        class AppErrorBoundary extends React.Component {
+            constructor(props) {
+                super(props);
+                this.state = { error: null };
+            }
+            static getDerivedStateFromError(error) {
+                return { error };
+            }
+            componentDidCatch(error, info) {
+                console.error("okGARAGE crashed while rendering:", error, info);
+            }
+            render() {
+                if (this.state.error) {
+                    return (
+                        <div style={{ position: 'fixed', inset: 0, background: '#07080b', color: '#fff', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, fontFamily: 'Inter, sans-serif', textAlign: 'center', zIndex: 9999 }}>
+                            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 10 }}>Something broke while displaying this</div>
+                            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', maxWidth: 460, marginBottom: 18, fontFamily: 'monospace', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                                {String((this.state.error && this.state.error.message) || this.state.error)}
+                            </div>
+                            <button
+                                onClick={() => window.location.reload()}
+                                style={{ padding: '11px 22px', borderRadius: 999, background: '#34d399', color: '#07080b', fontWeight: 800, border: 'none', cursor: 'pointer', fontSize: 13 }}
+                            >
+                                Reload the app
+                            </button>
+                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 14, maxWidth: 360 }}>
+                                Your garage data is safe -- this is a display crash, not data loss. Screenshot this exact message and send it over.
+                            </div>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
         const container = document.getElementById('root');
         const root = ReactDOM.createRoot(container);
-        root.render(<App />);
+        root.render(<AppErrorBoundary><App /></AppErrorBoundary>);
     </script>
 </body>
 </html>
