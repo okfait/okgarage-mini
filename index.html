@@ -1386,18 +1386,19 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
         // at a glance, not just read blurred text.
         const ReelItemContent = ({ item, itemHeight }) => {
             if (!item) return null;
-            // Both icon kinds now render at the SAME size (instead of two
-            // different multipliers that happened to look mismatched --
-            // Material Symbol glyphs fill their box almost edge-to-edge,
-            // while the imported PNG icons (car-type icons, car cover
-            // photos) tend to have blank padding baked into the source
-            // image itself, so at the old smaller size some of them were
-            // basically invisible behind the text). Bumping both up to the
-            // same larger fraction of the row makes every rail read the
-            // same regardless of which kind of icon it happens to use.
+            // Material Symbol glyphs and the small imported type-icons (like
+            // the Hatchback body-type icon) look right at this size. The
+            // Garage rail's icon is different -- it's your actual car's cover
+            // photo, and photos read better noticeably bigger than a little
+            // line-art glyph does, so that one gets its own larger size
+            // ('car-image') instead of sharing the same number as everything else.
             const iconSize = itemHeight * 0.82;
+            const carImageSize = itemHeight * 1.05;
             return (
                 <div style={{ height: itemHeight }} className="relative flex items-center justify-center w-full">
+                    {item.icon && item.icon.kind === 'car-image' && (
+                        <img src={item.icon.url} alt="" className="absolute inset-0 m-auto object-contain opacity-35 pointer-events-none" style={{ width: carImageSize, height: carImageSize }} />
+                    )}
                     {item.icon && item.icon.kind === 'image' && (
                         <img src={item.icon.url} alt="" className="absolute inset-0 m-auto object-contain opacity-35 pointer-events-none" style={{ width: iconSize, height: iconSize }} />
                     )}
@@ -1698,7 +1699,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
         // ANY card made the whole page recalculate EVERY card at once (that
         // was the main cause of the click-lag) -- now a card only
         // recalculates itself when something about IT actually changes.
-        const GarageCard = React.memo(({ car, gridIndex, isHovered, onHoverCard, onContextMenu, onOpenGallery, onResetMastery, getDynamicGradient, getCarLevel, getLevelBadgeStyles, getGreenvilleTagStyles, getMasteryLevel }) => {
+        const GarageCard = React.memo(({ car, gridIndex, gridScale = 1, isHovered, onHoverCard, onContextMenu, onOpenGallery, onResetMastery, getDynamicGradient, getCarLevel, getLevelBadgeStyles, getGreenvilleTagStyles, getMasteryLevel }) => {
             const spec = getDynamicGradient(car.color);
             const resolvedLevel = getCarLevel(car);
             const badgeStyles = getLevelBadgeStyles(resolvedLevel);
@@ -1772,7 +1773,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     onMouseDown={startHold}
                     onMouseUp={cancelHold}
                     onClick={handleCardClick}
-                    style={{ background: spec.gradient, borderColor: spec.border, animationDelay: `${gridIndex * 25}ms`, '--glow-rgb': spec.rawRGB }}
+                    style={{ background: spec.gradient, borderColor: spec.border, animationDelay: `${gridIndex * 25}ms`, '--glow-rgb': spec.rawRGB, zoom: gridScale }}
                     className="group relative rounded-2xl p-5 border transition-all card-transition h-[340px] overflow-hidden shadow-[0_12px_28px_rgba(0,0,0,0.85)] cursor-pointer staggered-card card-glow-hover garage-card-cv"
                 >
                     <AmbientSpheres colorRGB={spec.rawRGB} count={3} intensify={isHovered} />
@@ -2289,9 +2290,9 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             // localStorage so it doesn't reset every time the app opens.
             const [gridScale, setGridScale] = useState(() => {
                 const saved = parseFloat(localStorage.getItem('gv_gridScale'));
-                return (!isNaN(saved) && saved >= 0.5 && saved <= 1) ? saved : 1;
+                return (!isNaN(saved) && saved >= 0.3 && saved <= 1) ? saved : 1;
             });
-            const GRID_SCALE_MIN = 0.55;
+            const GRID_SCALE_MIN = 0.35;
             const GRID_SCALE_STEP = 0.08;
             useEffect(() => {
                 const onKeyDown = (e) => {
@@ -3679,7 +3680,7 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 const finalCarDisplay = `${finalCar.brand} ${finalCar.modelName}`;
                 const garagePoolItems = garage.map(c => ({
                     display: `${c.brand} ${c.modelName}`,
-                    icon: c.image ? { kind: 'image', url: c.image } : (CAR_TYPE_ICON_URLS[c.type] ? { kind: 'image', url: CAR_TYPE_ICON_URLS[c.type] } : null)
+                    icon: c.image ? { kind: 'car-image', url: c.image } : (CAR_TYPE_ICON_URLS[c.type] ? { kind: 'image', url: CAR_TYPE_ICON_URLS[c.type] } : null)
                 }));
                 setRollPools(prev => ({ ...prev, garage: garagePoolItems }));
                 setRollGarage({
@@ -3756,14 +3757,22 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             // one-off visual effect, not something that needs to persist or
             // re-render.
             // Sends a swarm of little particles flying from wherever you
-            // clicked to the Mastery pill, each landing at its own moment and
-            // bowing along its own curved path (not all in a straight line)
-            // so it reads as a loose swarm being pulled in rather than a
-            // single burst. XP is awarded PER PARTICLE, right as it lands --
-            // that's what actually grows the pill's fill bar bit by bit
-            // (via its own CSS width transition) instead of the whole amount
-            // just teleporting into the bar the instant you clicked, back
-            // before the balls had even reached it.
+            // clicked to the Mastery pill. XP is awarded PER PARTICLE, right
+            // as it lands -- that's what grows the pill's fill bar bit by bit
+            // instead of the whole amount teleporting in the instant you
+            // clicked, before the particles had even arrived.
+            //
+            // Rewritten motion: the old version moved each particle through
+            // several separate keyframe checkpoints (burst outward, hold,
+            // bow out to a midpoint, then arrive) -- the Web Animations API
+            // interpolates in a STRAIGHT LINE between each of those
+            // checkpoints, so what actually got drawn was a sequence of
+            // sudden direction changes stitched together, not a real curve.
+            // That's what read as jerky/odd motion. This version instead
+            // drives every particle along ONE continuous quadratic curve
+            // (start -> a single bowed-out control point -> the pill), computed
+            // fresh every frame with a smooth ease -- an actual arc, with no
+            // checkpoints or direction snaps in the middle of the flight.
             const spawnXpBurst = (originEl, colorRGB, carId, totalXp) => {
                 if (!originEl || !masteryPillRef.current) return;
                 const originRect = originEl.getBoundingClientRect();
@@ -3779,17 +3788,16 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                 const dx = targetX - originX;
                 const dy = targetY - originY;
                 const dist = Math.hypot(dx, dy) || 1;
-                // Perpendicular direction to the straight origin->target line --
-                // used to bow each particle's path out to one side or the
-                // other, so they don't all travel the exact same line.
                 const perpX = -dy / dist;
                 const perpY = dx / dist;
+
+                const easeInOutCubic = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
                 for (let i = 0; i < particleCount; i++) {
                     const el = document.createElement('div');
                     el.style.position = 'fixed';
-                    el.style.left = `${originX}px`;
-                    el.style.top = `${originY}px`;
+                    el.style.left = '0px';
+                    el.style.top = '0px';
                     el.style.width = '7px';
                     el.style.height = '7px';
                     el.style.borderRadius = '50%';
@@ -3797,48 +3805,62 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                     el.style.boxShadow = `0 0 10px rgba(${colorRGB},0.9)`;
                     el.style.zIndex = '9999';
                     el.style.pointerEvents = 'none';
+                    el.style.opacity = '0';
                     document.body.appendChild(el);
 
-                    const burstAngle = Math.random() * Math.PI * 2;
-                    const burstDist = 35 + Math.random() * 45;
-                    const burstX = Math.cos(burstAngle) * burstDist;
-                    const burstY = Math.sin(burstAngle) * burstDist;
+                    // A small, gentle scatter so all 16 don't launch from the
+                    // exact same pixel -- not a separate "burst" motion stage,
+                    // just where the one smooth curve happens to begin.
+                    const scatterAngle = Math.random() * Math.PI * 2;
+                    const scatterDist = 8 + Math.random() * 18;
+                    const startX = originX + Math.cos(scatterAngle) * scatterDist;
+                    const startY = originY + Math.sin(scatterAngle) * scatterDist;
 
-                    // Each particle curves in at its own angle and strength --
-                    // a believable little swarm converging on the pill rather
-                    // than 16 identical straight lines.
+                    // One control point bowing the curve out to one side or
+                    // the other -- this is the entire "shape" of the arc, so
+                    // each particle's path is a single clean sweep rather
+                    // than several stitched-together segments.
                     const curveSign = Math.random() < 0.5 ? -1 : 1;
-                    const curveAmount = (40 + Math.random() * 110) * curveSign;
-                    const midT = 0.55 + Math.random() * 0.15;
-                    const midX = dx * midT + perpX * curveAmount;
-                    const midY = dy * midT + perpY * curveAmount;
+                    const curveAmount = (28 + Math.random() * 65) * curveSign;
+                    const controlX = originX + dx * 0.5 + perpX * curveAmount;
+                    const controlY = originY + dy * 0.5 + perpY * curveAmount;
 
-                    // Noticeably slower and more spread out than before, so
-                    // the whole swarm reads as a lingering flow rather than a
-                    // quick burst -- this spread is also what makes the
-                    // per-particle XP growth below actually visible as
-                    // distinct little steps instead of one instant jump.
-                    const duration = 2600 + Math.random() * 1400;
-                    const delay = Math.random() * 900;
+                    const duration = 1500 + Math.random() * 650;
+                    const delay = Math.random() * 700;
+                    const startTime = performance.now() + delay;
+                    let landed = false;
 
-                    const anim = el.animate([
-                        { transform: 'translate(-50%, -50%) scale(0.6)', opacity: 0, offset: 0 },
-                        { transform: `translate(calc(-50% + ${burstX}px), calc(-50% + ${burstY}px)) scale(1.15)`, opacity: 1, offset: 0.16 },
-                        { transform: `translate(calc(-50% + ${burstX}px), calc(-50% + ${burstY}px)) scale(1)`, opacity: 1, offset: 0.34 },
-                        { transform: `translate(calc(-50% + ${midX}px), calc(-50% + ${midY}px)) scale(0.85)`, opacity: 1, offset: 0.75 },
-                        { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.2)`, opacity: 0.85, offset: 1 }
-                    ], {
-                        duration,
-                        delay,
-                        easing: 'cubic-bezier(0.4, 0.05, 0.2, 1)',
-                        fill: 'forwards'
-                    });
-                    anim.onfinish = () => {
-                        el.remove();
-                        if (carId != null && xpPerParticle) awardMissionXp(carId, xpPerParticle);
-                        setPillGlowing(true);
-                        setTimeout(() => setPillGlowing(false), 500);
+                    const tick = (now) => {
+                        const elapsed = now - startTime;
+                        if (elapsed < 0) {
+                            requestAnimationFrame(tick);
+                            return;
+                        }
+                        const rawT = Math.min(1, elapsed / duration);
+                        const t = easeInOutCubic(rawT);
+
+                        // Quadratic bezier -- one continuous curve, recomputed
+                        // fresh every frame instead of hopping between keyframes.
+                        const x = (1 - t) * (1 - t) * startX + 2 * (1 - t) * t * controlX + t * t * targetX;
+                        const y = (1 - t) * (1 - t) * startY + 2 * (1 - t) * t * controlY + t * t * targetY;
+
+                        const scale = rawT < 0.12 ? 0.5 + (rawT / 0.12) * 0.6 : Math.max(0.2, 1.1 - rawT * 0.7);
+                        const opacity = rawT < 0.08 ? rawT / 0.08 : (rawT > 0.85 ? Math.max(0, (1 - rawT) / 0.15) : 1);
+
+                        el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%) scale(${scale})`;
+                        el.style.opacity = String(opacity);
+
+                        if (rawT < 1) {
+                            requestAnimationFrame(tick);
+                        } else if (!landed) {
+                            landed = true;
+                            el.remove();
+                            if (carId != null && xpPerParticle) awardMissionXp(carId, xpPerParticle);
+                            setPillGlowing(true);
+                            setTimeout(() => setPillGlowing(false), 500);
+                        }
                     };
+                    requestAnimationFrame(tick);
                 }
             };
 
@@ -4822,11 +4844,22 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
             };
 
             // Adaptive layout selectors
-            const garageGridClass = useMemo(() => {
-                if (splitOffset < 15) return 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5';
-                if (splitOffset < 40) return 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4';
-                return 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3';
-            }, [splitOffset]);
+            // Was Tailwind breakpoint classes (grid-cols-1 md:grid-cols-2 etc)
+            // keyed to the actual browser VIEWPORT width -- meaning the
+            // Ctrl+ArrowDown shrink shortcut couldn't ever add more columns,
+            // no matter how small it scaled things, since those breakpoints
+            // don't care about the grid's own container size, only the
+            // window's. Switched to a real CSS Grid auto-fill/minmax layout
+            // instead, which sizes columns off the ACTUAL available width --
+            // so shrinking gridScale genuinely fits more columns (and more
+            // rows, since each card's real footprint gets smaller too, not
+            // just visually scaled), instead of just zooming out on the same
+            // fixed column count.
+            const GARAGE_CARD_BASE_WIDTH = 260;
+            const garageGridStyle = useMemo(() => ({
+                gridTemplateColumns: `repeat(auto-fill, minmax(${Math.round(GARAGE_CARD_BASE_WIDTH * gridScale)}px, 1fr))`,
+                gap: `${Math.round(16 * gridScale)}px`
+            }), [gridScale]);
 
             const gridStyle = useMemo(() => {
                 const leftColWidth = splitOffset < 5 ? '0px' : `${splitOffset}%`;
@@ -4863,22 +4896,23 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                         const progress = loadingReveal.total > 0 ? loadingReveal.loaded / loadingReveal.total : 0;
                                         const revealed = progress >= revealThreshold;
                                         return (
-                                            <div
+                                            <img
                                                 key={i}
-                                                className="absolute rounded-2xl overflow-hidden border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.6)] transition-all ease-out"
+                                                src={item.src}
+                                                alt=""
+                                                className="absolute object-contain transition-all ease-out"
                                                 style={{
                                                     left: `${item.left}%`,
                                                     top: `${item.top}%`,
                                                     width: item.size,
                                                     height: item.size * 0.68,
                                                     transform: `translate(-50%, -50%) rotate(${item.rotate}deg) scale(${revealed ? 1 : 0.6})`,
-                                                    opacity: revealed ? 0.3 : 0,
+                                                    opacity: revealed ? 0.32 : 0,
+                                                    filter: 'drop-shadow(0 12px 24px rgba(0,0,0,0.6))',
                                                     transitionDuration: '700ms',
                                                     transitionDelay: `${item.delay}ms`
                                                 }}
-                                            >
-                                                <img src={item.src} alt="" className="w-full h-full object-contain bg-black/40" />
-                                            </div>
+                                            />
                                         );
                                     })}
                                 </div>
@@ -5096,24 +5130,6 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                             <h1 className="text-xl font-extrabold tracking-tight font-['Montserrat'] bg-gradient-to-r from-white via-white/80 to-white/60 bg-clip-text text-transparent">okGARAGE - mini</h1>
                         </div>
                         <div className="flex items-center gap-3">
-                            {/* Quick stats -- Backup Data and Delete All moved into the
-                                "More" menu on the right specifically to free up this row
-                                for these instead of cramming them in alongside everything
-                                else. */}
-                            <div className="flex items-center gap-2 mr-1">
-                                <div className="h-10 px-3.5 rounded-full bg-white/[0.03] border border-white/10 flex items-center gap-1.5" title="Total vehicles in your garage">
-                                    <span className="material-symbols-outlined text-[15px] text-white/40">directions_car</span>
-                                    <span className="text-[12px] font-bold text-white/80 font-sans">{quickStats.totalVehicles}</span>
-                                </div>
-                                <div className="h-10 px-3.5 rounded-full bg-white/[0.03] border border-white/10 flex items-center gap-1.5" title="Total buy price across your garage">
-                                    <span className="material-symbols-outlined text-[15px] text-emerald-400/70">payments</span>
-                                    <span className="text-[12px] font-bold text-emerald-400 font-sans">${quickStats.totalValue.toLocaleString()}</span>
-                                </div>
-                                <div className="h-10 px-3.5 rounded-full bg-white/[0.03] border border-white/10 flex items-center gap-1.5" title="Average Mastery level across your garage">
-                                    <span className="material-symbols-outlined text-[15px] text-white/40">military_tech</span>
-                                    <span className="text-[12px] font-bold text-white/80 font-sans">Lvl {quickStats.avgLevel.toFixed(1)}</span>
-                                </div>
-                            </div>
                             <button onClick={() => setIsPriceOverviewOpen(true)} className="h-10 px-4 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-white/80 transition-colors flex items-center gap-1.5">
                                 <span className="material-symbols-outlined text-[15px]">payments</span>
                                 Price Overview
@@ -5155,6 +5171,23 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                             style={{ top: dataMenuPos.top, right: dataMenuPos.right }}
                                             className="fixed z-[201] w-56 bg-[#15161b] border border-white/10 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.7)] p-1.5 flex flex-col gap-1"
                                         >
+                                            {/* Moved here from the header row -- felt more at
+                                                home as a quick readout inside this menu than
+                                                as separate pills competing for space up top. */}
+                                            <div className="flex items-center justify-between px-3 pt-2 pb-2.5 mb-0.5 border-b border-white/[0.06]">
+                                                <div className="flex flex-col items-center gap-0.5">
+                                                    <span className="text-[13px] font-black text-white font-sans">{quickStats.totalVehicles}</span>
+                                                    <span className="text-[8px] uppercase tracking-wider text-white/30 font-sans">Vehicles</span>
+                                                </div>
+                                                <div className="flex flex-col items-center gap-0.5">
+                                                    <span className="text-[13px] font-black text-emerald-400 font-sans">${quickStats.totalValue.toLocaleString()}</span>
+                                                    <span className="text-[8px] uppercase tracking-wider text-white/30 font-sans">Value</span>
+                                                </div>
+                                                <div className="flex flex-col items-center gap-0.5">
+                                                    <span className="text-[13px] font-black text-white font-sans">{quickStats.avgLevel.toFixed(1)}</span>
+                                                    <span className="text-[8px] uppercase tracking-wider text-white/30 font-sans">Avg Lvl</span>
+                                                </div>
+                                            </div>
                                             <span className="px-3 pt-1.5 pb-1 text-[9px] font-black uppercase tracking-widest text-white/25 font-sans">Backup Data</span>
                                             <button
                                                 onClick={() => { handleDownloadLocalBackup(); setIsDataMenuOpen(false); }}
@@ -5507,20 +5540,13 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
 
                                 {/* Staggered cascading entry on grid cards sorting */}
                                 <div ref={garageScrollRef} className="flex-1 overflow-y-auto pl-1 pr-1 pb-4 space-y-4 smooth-scroll">
-                                    <div
-                                        className={`grid gap-4 ${garageGridClass}`}
-                                        style={{
-                                            transform: `scale(${gridScale})`,
-                                            transformOrigin: 'top left',
-                                            width: `${100 / gridScale}%`,
-                                            transition: 'transform 180ms ease-out, width 180ms ease-out'
-                                        }}
-                                    >
+                                    <div className="grid" style={garageGridStyle}>
                                         {sortedGarage.map((car, gridIndex) => (
                                             <GarageCard
                                                 key={car.id}
                                                 car={car}
                                                 gridIndex={gridIndex}
+                                                gridScale={gridScale}
                                                 isHovered={hoveredCardId === car.id}
                                                 onHoverCard={setHoveredCardId}
                                                 onContextMenu={handleContextMenu}
@@ -6457,94 +6483,6 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                 </div>
                             )}
 
-                            {isPriceOverviewOpen && (
-                                <div className="fixed inset-0 z-[190] flex items-center justify-center p-6">
-                                    <div className="absolute inset-0 bg-black/90 backdrop-blur-sm" onClick={() => setIsPriceOverviewOpen(false)} />
-                                    <div className="relative bg-[#121318] border border-white/10 rounded-3xl w-full max-w-4xl max-h-[85vh] shadow-[0_24px_80px_rgba(0,0,0,0.9)] flex flex-col overflow-hidden">
-                                        <div className="p-6 pb-4 flex items-center justify-between border-b border-white/[0.06] shrink-0">
-                                            <div>
-                                                <h3 className="text-lg font-black font-['Montserrat']">Price Overview</h3>
-                                                <p className="text-[11px] text-white/40 font-sans mt-0.5">Every car's buy vs. estimated sell price</p>
-                                            </div>
-                                            <button onClick={() => setIsPriceOverviewOpen(false)} className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors">
-                                                <span className="material-symbols-outlined text-[18px] text-white/60">close</span>
-                                            </button>
-                                        </div>
-
-                                        <div className="px-6 py-4 grid grid-cols-2 gap-4 border-b border-white/[0.06] shrink-0">
-                                            <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-4">
-                                                <span className="text-[10px] text-emerald-400/70 font-bold uppercase tracking-wider font-sans">Total Buy Price</span>
-                                                <div className="text-xl font-black text-emerald-400 font-sans mt-1"><CountUpNumber value={priceOverviewTotals.buy} prefix="$" /></div>
-                                            </div>
-                                            <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4">
-                                                <span className="text-[10px] text-red-400/70 font-bold uppercase tracking-wider font-sans">Total Sell Price</span>
-                                                <div className="text-xl font-black text-red-400 font-sans mt-1"><CountUpNumber value={priceOverviewTotals.sell} prefix="$" /></div>
-                                            </div>
-                                        </div>
-
-                                        <div className="px-6 pt-3 pb-2 flex items-center gap-1 text-[10px] text-white/40 font-bold uppercase tracking-wider font-sans border-b border-white/[0.06] shrink-0">
-                                            <div className="w-10 shrink-0"></div>
-                                            {[
-                                                { key: 'Level', cls: 'w-14 justify-center' },
-                                                { key: 'Name', cls: 'flex-1' },
-                                                { key: 'Year', cls: 'w-14 justify-center' },
-                                                { key: 'Buy Price', cls: 'w-28 justify-end' },
-                                                { key: 'Sell Price', cls: 'w-28 justify-end' }
-                                            ].map(col => (
-                                                <button
-                                                    key={col.key}
-                                                    onClick={() => {
-                                                        if (priceSortBy === col.key) setPriceSortDir(d => d === 'desc' ? 'asc' : 'desc');
-                                                        else { setPriceSortBy(col.key); setPriceSortDir('desc'); }
-                                                    }}
-                                                    className={`${col.cls} shrink-0 flex items-center gap-0.5 hover:text-white/80 transition-colors ${priceSortBy === col.key ? 'text-white' : ''}`}
-                                                >
-                                                    {col.key}
-                                                    {priceSortBy === col.key && (
-                                                        <span className="material-symbols-outlined text-[12px]">{priceSortDir === 'desc' ? 'arrow_downward' : 'arrow_upward'}</span>
-                                                    )}
-                                                </button>
-                                            ))}
-                                        </div>
-
-                                        <div ref={priceOverviewScrollRef} className="flex-1 overflow-y-auto px-6 py-3 flex flex-col gap-1">
-                                            {priceOverviewRows.map(({ car, level, sellPrice }) => {
-                                                const badgeStyles = getLevelBadgeStyles(level);
-                                                return (
-                                                    <div key={car.id} className="flex items-center gap-1 py-2 border-b border-white/[0.03] last:border-0">
-                                                        <div className="w-10 h-10 rounded-lg bg-black/30 flex items-center justify-center overflow-hidden shrink-0 mr-2">
-                                                            {car.image ? (
-                                                                <img src={car.image} alt="" loading="lazy" decoding="async" className="w-full h-full object-contain" />
-                                                            ) : (
-                                                                <span className="material-symbols-outlined text-[16px] text-white/20">directions_car</span>
-                                                            )}
-                                                        </div>
-                                                        <div className="w-14 flex justify-center shrink-0">
-                                                            <span
-                                                                style={{ backgroundColor: badgeStyles.bg, color: badgeStyles.text, borderColor: badgeStyles.border }}
-                                                                className="text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase font-sans"
-                                                            >
-                                                                {level === 'Permbanned' ? <span className="material-symbols-outlined text-[11px] leading-none align-middle">block</span> : (level === 'Level 0' ? '0' : level)}
-                                                            </span>
-                                                        </div>
-                                                        <div className="flex-1 min-w-0 pr-2">
-                                                            <div className="text-[12px] font-bold text-white truncate font-sans">{car.brand} {car.modelName}</div>
-                                                            {car.trim && <div className="text-[10px] text-white/40 truncate font-sans">{car.trim}</div>}
-                                                        </div>
-                                                        <div className="w-14 text-center text-[11px] text-white/50 font-sans shrink-0">{car.year}</div>
-                                                        <div className="w-28 text-right text-[12px] font-bold text-emerald-400 font-sans shrink-0">${(car.cost || 0).toLocaleString()}</div>
-                                                        <div className="w-28 text-right text-[12px] font-bold text-red-400 font-sans shrink-0">${sellPrice.toLocaleString()}</div>
-                                                    </div>
-                                                );
-                                            })}
-                                            {priceOverviewRows.length === 0 && (
-                                                <div className="text-center py-16 text-white/30 text-sm font-sans">No cars in your garage yet.</div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
                             {isAiImportOpen && (
                                 <div className="fixed inset-0 z-[120] flex items-center justify-center p-6">
                                     <div className="absolute inset-0 bg-black/85 backdrop-blur-sm" onClick={() => setIsAiImportOpen(false)} />
@@ -6608,6 +6546,103 @@ Only use the exact allowed values listed for type, pass, fuel, transmission, and
                                     </div>
                                 </div>
                             )}
+                        </div>
+                    )}
+
+                    {/* THE REAL BUG: this modal used to be written INSIDE the
+                        Add/Edit Vehicle modal's own JSX, several levels deep.
+                        That meant it could only ever actually mount once that
+                        OTHER modal was already open -- which is exactly why
+                        clicking Price Overview alone did nothing, but it
+                        would show up once Add Vehicle was opened too. Moving
+                        it out here, as its own independent top-level modal,
+                        is what actually fixes it -- it no longer depends on
+                        anything else being open. */}
+                    {isPriceOverviewOpen && (
+                        <div className="fixed inset-0 z-[190] flex items-center justify-center p-6">
+                            <div className="absolute inset-0 bg-black/90 backdrop-blur-sm" onClick={() => setIsPriceOverviewOpen(false)} />
+                            <div className="relative bg-[#121318] border border-white/10 rounded-3xl w-full max-w-4xl max-h-[85vh] shadow-[0_24px_80px_rgba(0,0,0,0.9)] flex flex-col overflow-hidden">
+                                <div className="p-6 pb-4 flex items-center justify-between border-b border-white/[0.06] shrink-0">
+                                    <div>
+                                        <h3 className="text-lg font-black font-['Montserrat']">Price Overview</h3>
+                                        <p className="text-[11px] text-white/40 font-sans mt-0.5">Every car's buy vs. estimated sell price</p>
+                                    </div>
+                                    <button onClick={() => setIsPriceOverviewOpen(false)} className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors">
+                                        <span className="material-symbols-outlined text-[18px] text-white/60">close</span>
+                                    </button>
+                                </div>
+
+                                <div className="px-6 py-4 grid grid-cols-2 gap-4 border-b border-white/[0.06] shrink-0">
+                                    <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-4">
+                                        <span className="text-[10px] text-emerald-400/70 font-bold uppercase tracking-wider font-sans">Total Buy Price</span>
+                                        <div className="text-xl font-black text-emerald-400 font-sans mt-1"><CountUpNumber value={priceOverviewTotals.buy} prefix="$" /></div>
+                                    </div>
+                                    <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4">
+                                        <span className="text-[10px] text-red-400/70 font-bold uppercase tracking-wider font-sans">Total Sell Price</span>
+                                        <div className="text-xl font-black text-red-400 font-sans mt-1"><CountUpNumber value={priceOverviewTotals.sell} prefix="$" /></div>
+                                    </div>
+                                </div>
+
+                                <div className="px-6 pt-3 pb-2 flex items-center gap-1 text-[10px] text-white/40 font-bold uppercase tracking-wider font-sans border-b border-white/[0.06] shrink-0">
+                                    <div className="w-10 shrink-0"></div>
+                                    {[
+                                        { key: 'Level', cls: 'w-14 justify-center' },
+                                        { key: 'Name', cls: 'flex-1' },
+                                        { key: 'Year', cls: 'w-14 justify-center' },
+                                        { key: 'Buy Price', cls: 'w-28 justify-end' },
+                                        { key: 'Sell Price', cls: 'w-28 justify-end' }
+                                    ].map(col => (
+                                        <button
+                                            key={col.key}
+                                            onClick={() => {
+                                                if (priceSortBy === col.key) setPriceSortDir(d => d === 'desc' ? 'asc' : 'desc');
+                                                else { setPriceSortBy(col.key); setPriceSortDir('desc'); }
+                                            }}
+                                            className={`${col.cls} shrink-0 flex items-center gap-0.5 hover:text-white/80 transition-colors ${priceSortBy === col.key ? 'text-white' : ''}`}
+                                        >
+                                            {col.key}
+                                            {priceSortBy === col.key && (
+                                                <span className="material-symbols-outlined text-[12px]">{priceSortDir === 'desc' ? 'arrow_downward' : 'arrow_upward'}</span>
+                                            )}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <div ref={priceOverviewScrollRef} className="flex-1 overflow-y-auto px-6 py-3 flex flex-col gap-1">
+                                    {priceOverviewRows.map(({ car, level, sellPrice }) => {
+                                        const badgeStyles = getLevelBadgeStyles(level);
+                                        return (
+                                            <div key={car.id} className="flex items-center gap-1 py-2 border-b border-white/[0.03] last:border-0">
+                                                <div className="w-11 h-11 flex items-center justify-center shrink-0 mr-2">
+                                                    {car.image ? (
+                                                        <img src={car.image} alt="" loading="lazy" decoding="async" className="w-full h-full object-contain" />
+                                                    ) : (
+                                                        <span className="material-symbols-outlined text-[18px] text-white/20">directions_car</span>
+                                                    )}
+                                                </div>
+                                                <div className="w-14 flex justify-center shrink-0">
+                                                    <span
+                                                        style={{ backgroundColor: badgeStyles.bg, color: badgeStyles.text, borderColor: badgeStyles.border }}
+                                                        className="text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase font-sans"
+                                                    >
+                                                        {level === 'Permbanned' ? <span className="material-symbols-outlined text-[11px] leading-none align-middle">block</span> : (level === 'Level 0' ? '0' : level)}
+                                                    </span>
+                                                </div>
+                                                <div className="flex-1 min-w-0 pr-2">
+                                                    <div className="text-[12px] font-bold text-white truncate font-sans">{car.brand} {car.modelName}</div>
+                                                    {car.trim && <div className="text-[10px] text-white/40 truncate font-sans">{car.trim}</div>}
+                                                </div>
+                                                <div className="w-14 text-center text-[11px] text-white/50 font-sans shrink-0">{car.year}</div>
+                                                <div className="w-28 text-right text-[12px] font-bold text-emerald-400 font-sans shrink-0">${(car.cost || 0).toLocaleString()}</div>
+                                                <div className="w-28 text-right text-[12px] font-bold text-red-400 font-sans shrink-0">${sellPrice.toLocaleString()}</div>
+                                            </div>
+                                        );
+                                    })}
+                                    {priceOverviewRows.length === 0 && (
+                                        <div className="text-center py-16 text-white/30 text-sm font-sans">No cars in your garage yet.</div>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     )}
 
